@@ -15,8 +15,10 @@ from src.models.auth import (
     ClientRefreshToken,
     InviteToken,
     Organization,
+    PasswordResetToken,
     User,
     UserRefreshToken,
+    UserRole,
     UserStatus,
 )
 from src.schemas.auth import ClientCreate, UserSignup
@@ -125,6 +127,7 @@ async def signup_user(db: AsyncSession, data: UserSignup) -> dict:
             hashed_password=hash_password(data.password),
             full_name=data.full_name,
             status=UserStatus.active,
+            role=UserRole.admin,
         )
         db.add(user)
         await db.flush()
@@ -148,7 +151,7 @@ async def signup_user(db: AsyncSession, data: UserSignup) -> dict:
     await db.flush()
     await db.refresh(user)
 
-    invite = await _create_invite_token(db, user.id, org.id)
+    await _create_invite_token(db, user.id, org.id)
 
     return {
         "status": "pending",
@@ -157,7 +160,6 @@ async def signup_user(db: AsyncSession, data: UserSignup) -> dict:
         "refresh_token": None,
         "token_type": "bearer",
         "expires_in": None,
-        "invite_link": f"/api/v1/auth/approve/{invite.token}",
     }
 
 
@@ -177,13 +179,16 @@ async def _create_invite_token(
     return invite
 
 
-async def approve_user(db: AsyncSession, token: str) -> User | None:
+async def approve_user(db: AsyncSession, token: str, organization_id: uuid.UUID | None = None) -> User | None:
     result = await db.execute(
         select(InviteToken).where(InviteToken.token == token)
     )
     invite = result.scalar_one_or_none()
 
     if invite is None or invite.used:
+        return None
+
+    if organization_id is not None and invite.organization_id != organization_id:
         return None
 
     now = datetime.now(timezone.utc)
@@ -321,9 +326,6 @@ async def delete_client(
     client = await get_client(db, organization_id, client_id)
     if client is None:
         return False
-    await db.execute(
-        select(ClientRefreshToken).where(ClientRefreshToken.client_id == client_id)
-    )
     await db.delete(client)
     await db.flush()
     return True
@@ -367,3 +369,81 @@ async def revoke_client_refresh_token(
     rt.revoked = True
     await db.flush()
     return True
+
+
+async def list_pending_invites(db: AsyncSession, organization_id: uuid.UUID) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(InviteToken, User.email)
+        .join(User, InviteToken.user_id == User.id)
+        .where(
+            InviteToken.organization_id == organization_id,
+            InviteToken.used.is_(False),
+            InviteToken.expires_at > now,
+        )
+    )
+    rows = result.all()
+    return [
+        {
+            "token": row.InviteToken.token,
+            "email": row.email,
+            "expires_at": row.InviteToken.expires_at.isoformat(),
+            "approve_url": f"/api/v1/auth/approve/{row.InviteToken.token}",
+        }
+        for row in rows
+    ]
+
+
+async def request_password_reset(db: AsyncSession, email: str) -> str | None:
+    result = await db.execute(
+        select(User).where(User.email == email, User.status == UserStatus.active)
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        return None
+
+    now = datetime.now(timezone.utc)
+    reset = PasswordResetToken(
+        user_id=user.id,
+        token=secrets.token_urlsafe(48),
+        expires_at=now + timedelta(hours=settings.password_reset_token_expire_hours),
+    )
+    db.add(reset)
+    await db.flush()
+    await db.refresh(reset)
+    return reset.token
+
+
+async def reset_password(db: AsyncSession, token: str, new_password: str) -> User | None:
+    result = await db.execute(
+        select(PasswordResetToken).where(PasswordResetToken.token == token)
+    )
+    reset = result.scalar_one_or_none()
+
+    if reset is None or reset.used:
+        return None
+
+    now = datetime.now(timezone.utc)
+    if reset.expires_at < now:
+        return None
+
+    result = await db.execute(select(User).where(User.id == reset.user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        return None
+
+    user.hashed_password = hash_password(new_password)
+    reset.used = True
+
+    result = await db.execute(
+        select(UserRefreshToken).where(
+            UserRefreshToken.user_id == user.id,
+            UserRefreshToken.revoked.is_(False),
+        )
+    )
+    for rt in result.scalars().all():
+        rt.revoked = True
+
+    await db.flush()
+    await db.refresh(user)
+    return user

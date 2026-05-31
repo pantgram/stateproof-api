@@ -7,7 +7,216 @@ Cryptographic proof of state for automated workflows using Merkle trees. Each wo
 - **Merkle tree integrity** -- every session and event is hashed into a Merkle tree; proofs can be generated and verified independently
 - **Multi-tenant** -- organizations, users, and API-key clients with scoped access
 - **User signup with invite flow** -- first user in an org is auto-approved; subsequent users require approval via an invite token
-- **JWT authentication** -- access tokens (short-lived) and refresh tokens (revocable)
+- **JWThe following changes must be applied to the existing StateProof 
+FastAPI implementation.
+
+## Change 1 — Two separate tree node tables (not one shared)
+
+Remove any single tree_nodes table with owner_type discriminator.
+Replace with two dedicated tables:
+
+### SessionTreeNode
+  __tablename__ = "session_tree_nodes"
+  id          UUID        PK
+  session_id  UUID        FK -> sessions
+  hash        VARCHAR(64)
+  left_hash   VARCHAR(64) nullable
+  right_hash  VARCHAR(64) nullable
+  parent_hash VARCHAR(64) nullable
+  level       INTEGER               -- 0 = leaf, max = root
+  position    INTEGER               -- left-to-right at this level
+  is_leaf     BOOLEAN
+  sequence_no INTEGER     nullable  -- which event this leaf represents
+                                    -- only when is_leaf = true
+  # NO event_id FK — no events table
+
+### WorkflowTreeNode
+  __tablename__ = "workflow_tree_nodes"
+  id          UUID        PK
+  workflow_id UUID        FK -> workflows
+  hash        VARCHAR(64)
+  left_hash   VARCHAR(64) nullable
+  right_hash  VARCHAR(64) nullable
+  parent_hash VARCHAR(64) nullable
+  level       INTEGER
+  position    INTEGER
+  is_leaf     BOOLEAN
+  session_id  UUID        FK -> sessions nullable
+                                    -- only when is_leaf = true
+
+Add Alembic migration for both tables.
+Add these indexes:
+
+  -- session_tree_nodes
+  CREATE INDEX ON session_tree_nodes(session_id);
+  CREATE INDEX ON session_tree_nodes(session_id, level, position);
+  CREATE INDEX ON session_tree_nodes(session_id) WHERE is_leaf = true;
+
+  -- workflow_tree_nodes
+  CREATE INDEX ON workflow_tree_nodes(workflow_id);
+  CREATE INDEX ON workflow_tree_nodes(workflow_id, level, position);
+  CREATE INDEX ON workflow_tree_nodes(session_id) WHERE is_leaf = true;
+
+## Change 2 — Session tree built from event hashes
+
+On POST /workflows/{id}/sessions:
+  Client submits event_hashes (pre-hashed) not raw events.
+  Server builds a session tree from these hashes.
+  session_hash = root of session tree (not concat hash).
+  SessionTreeNode rows persisted for the session tree.
+
+  Updated SessionCreate schema:
+  {
+    event_hashes: [{ sequence_no: int, hash: str }]  -- min 1
+    status: "completed" | "pending" | "failed"
+    started_at: datetime
+    ended_at: datetime | null
+    meta: dict | null
+  }
+
+  Updated submit processing:
+  1. Validate each hash is valid sha256 hex string (64 chars)
+  2. Sort event_hashes by sequence_no
+  3. Build session tree: session_tree = build_tree([h.hash for h in event_hashes])
+  4. session_hash = session_tree.get_root()
+  5. prev_hash = last session leaf_hash for this workflow ("0"*64 if first)
+  6. leaf_hash = sha256(session_hash + prev_hash)
+  7. Persist Session row (no events column)
+  8. Persist SessionTreeNode rows from session tree
+     set sequence_no on leaf nodes to match event_hashes order
+  9. Append leaf_hash to workflow tree
+  10. Persist WorkflowTreeNode rows
+  11. Update workflow.hex_root
+  12. Increment workflow.session_count
+  All in one transaction.
+
+## Change 3 — Verify accepts raw events OR pre-hashed
+
+Updated VerifyWorkflowRequest:
+  Each session item accepts either format:
+  {
+    session_id: uuid,
+
+    # Option A — client sends raw events (server hashes, discards)
+    events?: [{
+      sequence_no: int,
+      payload: dict
+    }]
+
+    # Option B — client already hashed
+    event_hashes?: [{
+      sequence_no: int,
+      hash: str
+    }]
+  }
+  At least one of events or event_hashes must be provided per session.
+
+  Hashing convention when raw events provided:
+    event_hash = sha256(
+        str(sequence_no) +
+        json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    )
+
+  CRITICAL: raw event data is NEVER written to DB under any path.
+  Hash in memory, use for verification, discard immediately.
+  This is the same convention clients use when hashing locally.
+
+  Updated verify processing per session:
+  1. If events provided: compute event_hashes server-side using convention above
+  2. If event_hashes provided: use directly
+  3. Sort by sequence_no
+  4. Rebuild session tree: build_tree(hashes)
+  5. computed_root = session_tree.get_root()
+  6. Load stored session.session_hash from DB
+  7. If computed_root != stored session_hash:
+       mark invalid, reason = "event log does not match stored session root"
+       continue to next session
+  8. Get proof_path from WorkflowTreeNode for this session
+  9. verify_proof(session.leaf_hash, proof_path, workflow.hex_root)
+  10. If proof fails: mark invalid, reason = "session not in workflow tree"
+  11. Discard all raw data and computed hashes — nothing written to DB
+
+## Change 4 — Event-level proof endpoint (new)
+
+Add new endpoint:
+  GET /api/v1/workflows/{workflow_id}/sessions/{session_id}/events/{sequence_no}/proof
+  Auth: JWT user token required
+
+  Walk SessionTreeNode to build proof path for one event leaf:
+  1. Find node WHERE session_id = ? AND sequence_no = ? AND is_leaf = true
+  2. Walk up tree collecting sibling hash + direction at each level
+  3. Stop at root (parent_hash is null)
+
+  Returns EventProofResponse:
+  {
+    session_id:   uuid,
+    sequence_no:  int,
+    event_hash:   str,   -- the stored leaf hash for this event
+    proof_path:   [{ hash: str, direction: "left"|"right" }],
+    session_hash: str    -- use as hex_root in POST /api/v1/verify
+  }
+
+  Client verifies a specific event using:
+    POST /api/v1/verify
+    {
+      leaf_hash:  their_computed_event_hash,
+      proof_path: from this response,
+      hex_root:   session_hash from this response
+    }
+  Client computes their own event_hash using the same convention:
+    sha256(str(sequence_no) + json.dumps(payload, sort_keys, no spaces))
+
+## Change 5 — Remove events storage entirely
+
+Remove from Session model:
+  events column (JSONB) if it exists
+
+Session model must NOT store any event data.
+Only these fields:
+  id, workflow_id, session_hash, leaf_hash, prev_hash,
+  event_count, status, started_at, ended_at, metadata
+
+event_count = len(event_hashes) from submit payload.
+
+Drop events table if it exists.
+Remove Event model if it exists.
+Add Alembic migration for these removals.
+
+## Change 6 — Stateless verify works for both tree levels
+
+POST /api/v1/verify (already exists, public, no auth)
+No changes to the endpoint itself.
+Add a comment in the code clarifying it works for both:
+
+  # For event-level verify:
+  #   leaf_hash = client computed event hash
+  #   proof_path = from GET .../events/{seq}/proof
+  #   hex_root = session.session_hash
+  #
+  # For session-level verify:
+  #   leaf_hash = session.leaf_hash
+  #   proof_path = from GET .../sessions/{id}/proof
+  #   hex_root = workflow.hex_root
+
+## Summary of what changes
+  - tree_nodes table -> split into session_tree_nodes + workflow_tree_nodes
+  - Session submit now builds TWO trees (session tree + workflow tree)
+  - SessionCreate.event_hashes replaces SessionCreate.events
+  - VerifyWorkflowRequest accepts raw events OR pre-hashed
+  - New endpoint: GET .../events/{sequence_no}/proof
+  - Session model has no events/payload storage of any kind
+  - Event model and events table removed entirely
+
+## What does NOT change
+  - Auth model (JWT user vs client token separation)
+  - Workflow CRUD endpoints
+  - Session list/get endpoints
+  - Existing session proof endpoint (workflow level)
+  - Stateless POST /api/v1/verify endpoint
+  - WorkflowResponse, SessionSubmitResponse schemas
+  - Organization, User, Client, Workflow models
+  - Hashing: sha256 throughout
+  - All existing indexes on other tablesT authentication** -- access tokens (short-lived) and refresh tokens (revocable)
 - **API key clients** -- machine-to-machine auth via API keys with key rotation
 - **Stateless verification** -- verify any Merkle proof without database access
 - **Event types** -- structured events with types (`tool_call`, `decision`, `approval`, `api_call`, `error`, `trigger`) and executors (`agent`, `rpa`, `human`, `integration`, `job`, `system`)

@@ -5,22 +5,23 @@ from src.models.auth import (
     Organization,
     User,
     UserRefreshToken,
+    UserRole,
     UserStatus,
 )
-from src.models.base import Base, Event, SessionTreeNode, Session, SessionStatus, Workflow, WorkflowTreeNode
+from src.models.base import Base, Session, SessionStatus, SessionTreeNode, Workflow, WorkflowTreeNode
 
 __all__ = [
     "Base",
     "Client",
     "ClientRefreshToken",
-    "Event",
-    "SessionTreeNode",
     "InviteToken",
     "Organization",
     "Session",
     "SessionStatus",
+    "SessionTreeNode",
     "User",
     "UserRefreshToken",
+    "UserRole",
     "UserStatus",
     "Workflow",
     "WorkflowTreeNode",

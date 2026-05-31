@@ -1,12 +1,12 @@
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel
 
 
-
 class ProofStep(BaseModel):
     hash: str
-    direction: str
+    direction: Literal["left", "right"]
 
 
 class SessionProofResponse(BaseModel):
@@ -16,9 +16,22 @@ class SessionProofResponse(BaseModel):
     hex_root: str
 
 
+class EventProofResponse(BaseModel):
+    session_id: uuid.UUID
+    sequence_no: int
+    event_hash: str
+    proof_path: list[ProofStep]
+    session_hash: str
+
+
+class VerifyEventRaw(BaseModel):
+    sequence_no: int
+    payload: dict
+
+
 class VerifySessionItem(BaseModel):
     session_id: uuid.UUID
-    events: list[dict]
+    events: list[VerifyEventRaw]
 
 
 class VerifyWorkflowRequest(BaseModel):
@@ -46,32 +59,3 @@ class StatelessVerifyRequest(BaseModel):
 
 class StatelessVerifyResponse(BaseModel):
     valid: bool
-
-
-class EventProofResponse(BaseModel):
-    event_id: uuid.UUID
-    leaf_hash: str
-    proof_path: list[ProofStep]
-    hex_root: str
-
-
-class VerifyEventItem(BaseModel):
-    event_id: uuid.UUID
-    payload: dict
-
-
-class VerifySessionRequest(BaseModel):
-    events: list[VerifyEventItem]
-
-
-class EventVerifyResult(BaseModel):
-    event_id: uuid.UUID
-    valid: bool
-    reason: str | None = None
-
-
-class VerifySessionResponse(BaseModel):
-    session_id: uuid.UUID
-    hex_root: str
-    results: list[EventVerifyResult]
-    all_valid: bool

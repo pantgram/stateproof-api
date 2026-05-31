@@ -27,7 +27,6 @@ class SignupResponse(BaseModel):
     refresh_token: str | None = None
     token_type: str = "bearer"
     expires_in: int | None = None
-    invite_link: str | None = None
 
 
 class TokenResponse(BaseModel):
@@ -84,6 +83,7 @@ class UserResponse(BaseModel):
     email: str
     full_name: str | None
     status: str
+    role: str
     created_at: datetime
 
 
@@ -94,9 +94,28 @@ class UserMeResponse(BaseModel):
     email: str
     full_name: str | None
     status: str
+    role: str
     organization: OrganizationResponse
 
 
 class ApproveResponse(BaseModel):
     message: str
     user: UserResponse
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    reset_token: str | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class ResetPasswordResponse(BaseModel):
+    message: str

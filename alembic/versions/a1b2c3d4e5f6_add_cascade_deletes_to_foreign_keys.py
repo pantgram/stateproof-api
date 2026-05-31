@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = "a1b2c3d4e5f6"
-down_revision: Union[str, None] = "6dac110ab5c1"
+down_revision: Union[str, None] = "i9d0e1f2a3b4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -24,11 +24,14 @@ def upgrade() -> None:
     op.drop_constraint("sessions_workflow_id_fkey", "sessions", type_="foreignkey")
     op.create_foreign_key("sessions_workflow_id_fkey", "sessions", "workflows", ["workflow_id"], ["id"], ondelete="CASCADE")
 
-    op.drop_constraint("tree_nodes_workflow_id_fkey", "tree_nodes", type_="foreignkey")
-    op.create_foreign_key("tree_nodes_workflow_id_fkey", "tree_nodes", "workflows", ["workflow_id"], ["id"], ondelete="CASCADE")
+    op.drop_constraint("tree_nodes_workflow_id_fkey", "workflow_tree_nodes", type_="foreignkey")
+    op.create_foreign_key("tree_nodes_workflow_id_fkey", "workflow_tree_nodes", "workflows", ["workflow_id"], ["id"], ondelete="CASCADE")
 
-    op.drop_constraint("tree_nodes_session_id_fkey", "tree_nodes", type_="foreignkey")
-    op.create_foreign_key("tree_nodes_session_id_fkey", "tree_nodes", "sessions", ["session_id"], ["id"], ondelete="CASCADE")
+    op.drop_constraint("tree_nodes_session_id_fkey", "workflow_tree_nodes", type_="foreignkey")
+    op.create_foreign_key("tree_nodes_session_id_fkey", "workflow_tree_nodes", "sessions", ["session_id"], ["id"], ondelete="CASCADE")
+
+    op.drop_constraint("session_tree_nodes_session_id_fkey", "session_tree_nodes", type_="foreignkey")
+    op.create_foreign_key("session_tree_nodes_session_id_fkey", "session_tree_nodes", "sessions", ["session_id"], ["id"], ondelete="CASCADE")
 
     op.drop_constraint("users_organization_id_fkey", "users", type_="foreignkey")
     op.create_foreign_key("users_organization_id_fkey", "users", "organizations", ["organization_id"], ["id"], ondelete="CASCADE")
@@ -56,11 +59,14 @@ def downgrade() -> None:
     op.drop_constraint("sessions_workflow_id_fkey", "sessions", type_="foreignkey")
     op.create_foreign_key("sessions_workflow_id_fkey", "sessions", "workflows", ["workflow_id"], ["id"])
 
-    op.drop_constraint("tree_nodes_workflow_id_fkey", "tree_nodes", type_="foreignkey")
-    op.create_foreign_key("tree_nodes_workflow_id_fkey", "tree_nodes", "workflows", ["workflow_id"], ["id"])
+    op.drop_constraint("tree_nodes_workflow_id_fkey", "workflow_tree_nodes", type_="foreignkey")
+    op.create_foreign_key("tree_nodes_workflow_id_fkey", "workflow_tree_nodes", "workflows", ["workflow_id"], ["id"])
 
-    op.drop_constraint("tree_nodes_session_id_fkey", "tree_nodes", type_="foreignkey")
-    op.create_foreign_key("tree_nodes_session_id_fkey", "tree_nodes", "sessions", ["session_id"], ["id"])
+    op.drop_constraint("tree_nodes_session_id_fkey", "workflow_tree_nodes", type_="foreignkey")
+    op.create_foreign_key("tree_nodes_session_id_fkey", "workflow_tree_nodes", "sessions", ["session_id"], ["id"])
+
+    op.drop_constraint("session_tree_nodes_session_id_fkey", "session_tree_nodes", type_="foreignkey")
+    op.create_foreign_key("session_tree_nodes_session_id_fkey", "session_tree_nodes", "sessions", ["session_id"], ["id"])
 
     op.drop_constraint("users_organization_id_fkey", "users", type_="foreignkey")
     op.create_foreign_key("users_organization_id_fkey", "users", "organizations", ["organization_id"], ["id"])

@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from src.db.session import get_db
 from src.middleware.config import settings
-from src.models.auth import Client, Organization, User, UserStatus
+from src.models.auth import Client, Organization, User, UserRole, UserStatus
 
 _bearer = HTTPBearer()
 
@@ -39,7 +39,11 @@ async def _resolve_user(db: AsyncSession, user_id: uuid.UUID, organization_id: u
     result = await db.execute(
         select(User)
         .options(selectinload(User.organization))
-        .where(User.id == user_id, User.status == UserStatus.active)
+        .where(
+            User.id == user_id,
+            User.organization_id == organization_id,
+            User.status == UserStatus.active,
+        )
     )
     user = result.scalar_one_or_none()
     if user is None:
@@ -51,7 +55,11 @@ async def _resolve_client(db: AsyncSession, client_id: uuid.UUID, organization_i
     result = await db.execute(
         select(Client)
         .options(selectinload(Client.organization))
-        .where(Client.id == client_id, Client.is_active.is_(True))
+        .where(
+            Client.id == client_id,
+            Client.organization_id == organization_id,
+            Client.is_active.is_(True),
+        )
     )
     client = result.scalar_one_or_none()
     if client is None:
@@ -108,3 +116,14 @@ async def get_api_key_principal(
 
     client = await _resolve_client(db, uuid.UUID(sub), uuid.UUID(organization_id))
     return Principal(id=client.id, organization_id=client.organization_id, organization=client.organization)
+
+
+async def get_admin_user(
+    user: User = Depends(get_current_user),
+) -> User:
+    if user.role != UserRole.admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return user

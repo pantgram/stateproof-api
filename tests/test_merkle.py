@@ -2,42 +2,35 @@ import pytest
 
 from src.services.merkle import (
     ZERO_HASH,
-    append_leaf,
     build_node_infos,
     build_tree,
     compute_leaf_hash,
-    compute_session_hash,
+    compute_raw_event_hash,
     get_proof,
     verify_proof,
 )
 
 
-class TestComputeSessionHash:
+class TestComputeRawEventHash:
     def test_basic(self):
-        events = [
-            {"sequence_no": 2, "payload": {"action": "b"}},
-            {"sequence_no": 1, "payload": {"action": "a"}},
-            {"sequence_no": 3, "payload": {"action": "c"}},
-        ]
-        h = compute_session_hash(events)
+        h = compute_raw_event_hash(0, {"action": "test"})
         assert len(h) == 64
         assert all(c in "0123456789abcdef" for c in h)
 
-    def test_ordering_matters(self):
-        e1 = [
-            {"sequence_no": 1, "payload": {"action": "a"}},
-            {"sequence_no": 2, "payload": {"action": "b"}},
-        ]
-        e2 = [
-            {"sequence_no": 2, "payload": {"action": "b"}},
-            {"sequence_no": 1, "payload": {"action": "a"}},
-        ]
-        assert compute_session_hash(e1) == compute_session_hash(e2)
+    def test_deterministic(self):
+        h1 = compute_raw_event_hash(1, {"action": "a"})
+        h2 = compute_raw_event_hash(1, {"action": "a"})
+        assert h1 == h2
 
-    def test_different_payloads_different_hash(self):
-        e1 = [{"sequence_no": 1, "payload": {"action": "a"}}]
-        e2 = [{"sequence_no": 1, "payload": {"action": "b"}}]
-        assert compute_session_hash(e1) != compute_session_hash(e2)
+    def test_different_payloads(self):
+        h1 = compute_raw_event_hash(0, {"action": "a"})
+        h2 = compute_raw_event_hash(0, {"action": "b"})
+        assert h1 != h2
+
+    def test_different_sequence_no(self):
+        h1 = compute_raw_event_hash(0, {"action": "a"})
+        h2 = compute_raw_event_hash(1, {"action": "a"})
+        assert h1 != h2
 
 
 class TestComputeLeafHash:
@@ -88,24 +81,6 @@ class TestBuildTree:
         for leaf in leaves:
             pt.append_entry(leaf.encode())
         assert tree.root == pt.get_state().hex()
-
-
-class TestAppendLeaf:
-    def test_append(self):
-        tree = build_tree(["aa"])
-        root1 = tree.root
-        tree = append_leaf(tree, "bb")
-        root2 = tree.root
-        assert tree.size == 2
-        assert root1 != root2
-
-    def test_append_multiple(self):
-        tree = build_tree(["aa"])
-        roots = [tree.root]
-        for leaf in ["bb", "cc", "dd", "ee"]:
-            tree = append_leaf(tree, leaf)
-            roots.append(tree.root)
-        assert len(set(roots)) == 5  # all different
 
 
 class TestProofs:
@@ -164,4 +139,4 @@ class TestBuildNodeInfos:
         nodes = build_node_infos(tree, entity_ids=["s1", "s2", "s3"])
         internal = [n for n in nodes if not n.is_leaf]
         promoted = [n for n in internal if n.left_hash is None and n.right_hash is None]
-        assert len(promoted) >= 1  # cc is promoted at level 1
+        assert len(promoted) >= 1

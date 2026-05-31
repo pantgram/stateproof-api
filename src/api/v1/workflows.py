@@ -5,23 +5,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_db
 from src.middleware.auth import Principal, get_api_key_principal, get_current_principal
-from src.schemas.event import EventListResponse, EventProofResponse
 from src.schemas.session import (
     SessionCreate,
     SessionListResponse,
     SessionResponse,
     SessionSubmitResponse,
 )
+from src.schemas.tree_node import (
+    SessionTreeNodeListResponse,
+    WorkflowTreeNodeListResponse,
+)
 from src.schemas.verify import (
-    EventProofResponse as EventProofSchema,
+    EventProofResponse,
     SessionProofResponse,
-    VerifySessionRequest,
-    VerifySessionResponse,
     VerifyWorkflowRequest,
     VerifyWorkflowResponse,
 )
 from src.schemas.workflow import WorkflowCreate, WorkflowListResponse, WorkflowResponse, WorkflowUpdate
-from src.services import event_service, session_service, workflow_service
+from src.services import session_service, workflow_service
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -150,6 +151,23 @@ async def get_session_proof(
     return result
 
 
+@router.get(
+    "/{workflow_id}/sessions/{session_id}/events/{sequence_no}/proof",
+    response_model=EventProofResponse,
+)
+async def get_event_proof(
+    workflow_id: uuid.UUID,
+    session_id: uuid.UUID,
+    sequence_no: int,
+    principal: Principal = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await session_service.get_event_proof(db, workflow_id, session_id, sequence_no)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return result
+
+
 @router.post("/{workflow_id}/verify", response_model=VerifyWorkflowResponse)
 async def verify_workflow(
     workflow_id: uuid.UUID,
@@ -166,8 +184,27 @@ async def verify_workflow(
     return result
 
 
-@router.get("/{workflow_id}/sessions/{session_id}/events", response_model=EventListResponse)
-async def list_events(
+@router.get("/{workflow_id}/tree-nodes", response_model=WorkflowTreeNodeListResponse)
+async def list_workflow_tree_nodes(
+    workflow_id: uuid.UUID,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    principal: Principal = Depends(get_current_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    wf = await workflow_service.get_workflow(db, principal.organization_id, workflow_id)
+    if wf is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    result = await session_service.list_workflow_tree_nodes(db, workflow_id, offset, limit)
+    return {"workflow_tree_nodes": result[0], "total": result[1]}
+
+
+@router.get(
+    "/{workflow_id}/sessions/{session_id}/tree-nodes",
+    response_model=SessionTreeNodeListResponse,
+)
+async def list_session_tree_nodes(
     workflow_id: uuid.UUID,
     session_id: uuid.UUID,
     offset: int = Query(0, ge=0),
@@ -175,62 +212,13 @@ async def list_events(
     principal: Principal = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    sess = await session_service.get_session(db, workflow_id, session_id)
-    if sess is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    wf = await workflow_service.get_workflow(db, principal.organization_id, workflow_id)
+    if wf is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
 
-    events, total = await event_service.list_events(db, session_id, offset, limit)
-    return {"events": events, "total": total}
-
-
-@router.get("/{workflow_id}/sessions/{session_id}/events/{event_id}", response_model=EventProofResponse)
-async def get_event(
-    workflow_id: uuid.UUID,
-    session_id: uuid.UUID,
-    event_id: uuid.UUID,
-    principal: Principal = Depends(get_current_principal),
-    db: AsyncSession = Depends(get_db),
-):
-    sess = await session_service.get_session(db, workflow_id, session_id)
-    if sess is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    evt = await event_service.get_event(db, session_id, event_id)
-    if evt is None:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return evt
-
-
-@router.get("/{workflow_id}/sessions/{session_id}/events/{event_id}/proof", response_model=EventProofSchema)
-async def get_event_proof(
-    workflow_id: uuid.UUID,
-    session_id: uuid.UUID,
-    event_id: uuid.UUID,
-    principal: Principal = Depends(get_current_principal),
-    db: AsyncSession = Depends(get_db),
-):
-    result = await event_service.get_event_proof(db, session_id, event_id)
+    result = await session_service.list_session_tree_nodes(
+        db, workflow_id, session_id, offset, limit
+    )
     if result is None:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return result
-
-
-@router.post("/{workflow_id}/sessions/{session_id}/verify", response_model=VerifySessionResponse)
-async def verify_session(
-    workflow_id: uuid.UUID,
-    session_id: uuid.UUID,
-    data: VerifySessionRequest,
-    principal: Principal = Depends(get_current_principal),
-    db: AsyncSession = Depends(get_db),
-):
-    sess = await session_service.get_session(db, workflow_id, session_id)
-    if sess is None:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    try:
-        result = await event_service.verify_session_events(
-            db, session_id, [e.model_dump() for e in data.events]
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    return result
+    return {"session_tree_nodes": result[0], "total": result[1]}

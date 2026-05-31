@@ -41,6 +41,15 @@ async def get_workflow_by_id(
     return result.scalar_one_or_none()
 
 
+async def get_workflow_by_id_for_update(
+    db: AsyncSession, workflow_id: uuid.UUID
+) -> Workflow | None:
+    result = await db.execute(
+        select(Workflow).where(Workflow.id == workflow_id).with_for_update()
+    )
+    return result.scalar_one_or_none()
+
+
 async def list_workflows(
     db: AsyncSession, organization_id: uuid.UUID, offset: int = 0, limit: int = 50
 ) -> tuple[list[Workflow], int]:

@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, String, text, Uuid
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, text, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -52,6 +52,9 @@ class Session(Base):
         Uuid, ForeignKey("workflows.id", ondelete="CASCADE")
     )
     session_hash: Mapped[str] = mapped_column(String(64))
+    leaf_hash: Mapped[str] = mapped_column(String(64))
+    prev_hash: Mapped[str] = mapped_column(String(64))
+    event_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[SessionStatus] = mapped_column(
         Enum(SessionStatus, name="session_status"),
         default=SessionStatus.completed,
@@ -62,21 +65,18 @@ class Session(Base):
     ended_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     workflow: Mapped["Workflow"] = relationship(back_populates="sessions")
-    event_rows: Mapped[list["Event"]] = relationship(back_populates="session", cascade="all, delete-orphan", passive_deletes=True)
-    event_tree_nodes: Mapped[list["SessionTreeNode"]] = relationship(back_populates="session", cascade="all, delete-orphan", passive_deletes=True)
-    workflow_leaf: Mapped["WorkflowTreeNode | None"] = relationship(
-        primaryjoin="Session.id == foreign(WorkflowTreeNode.session_id)",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        uselist=False,
-    )
+    tree_nodes: Mapped[list["SessionTreeNode"]] = relationship(back_populates="session", cascade="all, delete-orphan", passive_deletes=True)
 
 
-class Event(Base):
-    __tablename__ = "events"
+class SessionTreeNode(Base):
+    __tablename__ = "session_tree_nodes"
     __table_args__ = (
-        Index("ix_events_session_id", "session_id"),
+        Index("ix_session_tree_nodes_session_id", "session_id"),
+        Index("ix_session_tree_nodes_session_id_level_position", "session_id", "level", "position"),
+        Index("ix_session_tree_nodes_session_id_is_leaf", "session_id", postgresql_where=text("is_leaf = true")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -85,16 +85,24 @@ class Event(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("sessions.id", ondelete="CASCADE")
     )
-    event_hash: Mapped[str] = mapped_column(String(64))
-    sequence_no: Mapped[int] = mapped_column(Integer)
+    hash: Mapped[str] = mapped_column(String(64))
+    left_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    right_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    level: Mapped[int] = mapped_column(Integer)
+    position: Mapped[int] = mapped_column(Integer)
+    is_leaf: Mapped[bool] = mapped_column(Boolean)
+    sequence_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    session: Mapped["Session"] = relationship(back_populates="event_rows")
+    session: Mapped["Session"] = relationship(back_populates="tree_nodes")
 
 
 class WorkflowTreeNode(Base):
     __tablename__ = "workflow_tree_nodes"
     __table_args__ = (
         Index("ix_workflow_tree_nodes_workflow_id", "workflow_id"),
+        Index("ix_workflow_tree_nodes_workflow_id_level_position", "workflow_id", "level", "position"),
+        Index("ix_workflow_tree_nodes_session_id_is_leaf", "session_id", postgresql_where=text("is_leaf = true")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -103,43 +111,15 @@ class WorkflowTreeNode(Base):
     workflow_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("workflows.id", ondelete="CASCADE")
     )
-    session_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=True
-    )
     hash: Mapped[str] = mapped_column(String(64))
-    entry: Mapped[str | None] = mapped_column(String(64), nullable=True)
     left_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     right_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     level: Mapped[int] = mapped_column(Integer)
     position: Mapped[int] = mapped_column(Integer)
-    is_leaf: Mapped[bool] = mapped_column(default=False)
+    is_leaf: Mapped[bool] = mapped_column(Boolean)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
+    )
 
     workflow: Mapped["Workflow"] = relationship(back_populates="tree_nodes")
-
-
-class SessionTreeNode(Base):
-    __tablename__ = "session_tree_nodes"
-    __table_args__ = (
-        Index("ix_session_tree_nodes_session_id", "session_id"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()")
-    )
-    session_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("sessions.id", ondelete="CASCADE")
-    )
-    event_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("events.id", ondelete="CASCADE"), nullable=True
-    )
-    hash: Mapped[str] = mapped_column(String(64))
-    entry: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    left_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    right_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    parent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    level: Mapped[int] = mapped_column(Integer)
-    position: Mapped[int] = mapped_column(Integer)
-    is_leaf: Mapped[bool] = mapped_column(default=False)
-
-    session: Mapped["Session"] = relationship(back_populates="event_tree_nodes")

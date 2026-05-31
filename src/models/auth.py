@@ -13,6 +13,11 @@ class UserStatus(str, enum.Enum):
     active = "active"
 
 
+class UserRole(str, enum.Enum):
+    admin = "admin"
+    member = "member"
+
+
 class Organization(Base):
     __tablename__ = "organizations"
 
@@ -45,6 +50,11 @@ class User(Base):
         default=UserStatus.active,
         server_default="active",
     )
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole, name="user_role"),
+        default=UserRole.member,
+        server_default="member",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
@@ -52,6 +62,7 @@ class User(Base):
     organization: Mapped["Organization"] = relationship(back_populates="users")
     refresh_tokens: Mapped[list["UserRefreshToken"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
     invite_tokens: Mapped[list["InviteToken"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
+    password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
 
 
 class Client(Base):
@@ -140,3 +151,24 @@ class InviteToken(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="invite_tokens")
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()")
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE")
+    )
+    token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+    user: Mapped["User"] = relationship(back_populates="password_reset_tokens")

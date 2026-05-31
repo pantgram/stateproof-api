@@ -1,40 +1,13 @@
 import hashlib
+import json
 from dataclasses import dataclass, field
 
 ZERO_HASH = "0" * 64
 
 
-def compute_event_hash(event_type: str, executor_type: str, action: str, timestamp, data: dict | None) -> str:
-    import json
-
-    if hasattr(timestamp, "isoformat"):
-        ts_str = timestamp.isoformat()
-    else:
-        ts_str = timestamp
-        if isinstance(ts_str, str) and ts_str.endswith("Z"):
-            ts_str = ts_str[:-1] + "+00:00"
-
-    payload = json.dumps(
-        {
-            "event_type": event_type,
-            "executor_type": executor_type,
-            "action": action,
-            "timestamp": ts_str,
-            "data": data,
-        },
-        sort_keys=True,
-    )
-    return hashlib.sha256(payload.encode()).hexdigest()
-
-
-def compute_session_hash(events: list[dict]) -> str:
-    import json
-
-    sorted_events = sorted(events, key=lambda e: e["sequence_no"])
-    concat = "".join(
-        json.dumps(e["payload"], sort_keys=True) for e in sorted_events
-    )
-    return hashlib.sha256(concat.encode()).hexdigest()
+def compute_raw_event_hash(sequence_no: int, payload: dict) -> str:
+    payload_str = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(f"{sequence_no}{payload_str}".encode()).hexdigest()
 
 
 def compute_leaf_hash(session_hash: str, prev_hash: str) -> str:
@@ -79,6 +52,10 @@ class MerkleTree:
 
     def append(self, entry: bytes) -> None:
         self._entries.append(entry)
+        self._build()
+
+    def extend(self, entries: list[bytes]) -> None:
+        self._entries.extend(entries)
         self._build()
 
     def _build(self) -> None:
@@ -175,14 +152,16 @@ class MerkleTree:
 
 def build_tree(leaf_hashes: list[str]) -> MerkleTree:
     tree = MerkleTree()
-    for h in leaf_hashes:
-        tree.append(h.encode())
+    if leaf_hashes:
+        tree.extend([h.encode() for h in leaf_hashes])
     return tree
 
 
-def append_leaf(tree: MerkleTree, leaf_hash: str) -> MerkleTree:
-    tree.append(leaf_hash.encode())
-    return tree
+def build_node_infos(
+    tree: MerkleTree,
+    entity_ids: list[str] | None = None,
+) -> list[TreeNodeInfo]:
+    return tree.get_node_infos(entity_ids)
 
 
 def get_proof(tree: MerkleTree, leaf_index: int) -> list[dict]:
@@ -198,10 +177,3 @@ def verify_proof(leaf_hash: str, proof_path: list[dict], hex_root: str) -> bool:
         else:
             current = _hash_node(current, sibling)
     return current.hex() == hex_root
-
-
-def build_node_infos(
-    tree: MerkleTree,
-    entity_ids: list[str] | None = None,
-) -> list[TreeNodeInfo]:
-    return tree.get_node_infos(entity_ids)

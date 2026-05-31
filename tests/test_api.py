@@ -1,32 +1,27 @@
-import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
+import hashlib
+import json
 
-from src.db.base import engine
-from src.main import app
+import pytest
+from httpx import AsyncClient
+
 from src.services.merkle import ZERO_HASH, verify_proof
 
 
-@pytest_asyncio.fixture
-async def client():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-    await engine.dispose()
+def _compute_event_hash(sequence_no: int, payload: dict) -> str:
+    payload_str = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(f"{sequence_no}{payload_str}".encode()).hexdigest()
+
+
+def make_payload(i: int) -> dict:
+    return {
+        "action": f"step_{i}",
+        "detail": f"event {i}",
+    }
 
 
 def make_events(n: int = 3) -> list[dict]:
     return [
-        {
-            "sequence_no": i,
-            "payload": {
-                "event_type": "tool_call" if i % 2 == 0 else "decision",
-                "executor_type": "agent" if i % 3 == 0 else "rpa",
-                "action": f"step_{i}",
-                "timestamp": f"2026-01-01T00:00:0{i}Z",
-                "data": {"detail": f"event {i}"},
-            },
-        }
+        {"sequence_no": i, "payload": make_payload(i)}
         for i in range(n)
     ]
 
@@ -41,9 +36,13 @@ async def test_full_workflow(client: AsyncClient):
     wf = wf_resp.json()
     wf_id = wf["id"]
     assert wf["hex_root"] == ZERO_HASH
+
     sess1_resp = await client.post(
         f"/api/v1/workflows/{wf_id}/sessions",
-        json={"events": make_events(3)},
+        json={
+            "events": make_events(3),
+            "started_at": "2026-01-01T00:00:00Z",
+        },
     )
     assert sess1_resp.status_code == 201
     s1 = sess1_resp.json()
@@ -53,7 +52,10 @@ async def test_full_workflow(client: AsyncClient):
 
     sess2_resp = await client.post(
         f"/api/v1/workflows/{wf_id}/sessions",
-        json={"events": make_events(5)},
+        json={
+            "events": make_events(5),
+            "started_at": "2026-01-01T00:01:00Z",
+        },
     )
     assert sess2_resp.status_code == 201
     s2 = sess2_resp.json()
@@ -62,7 +64,10 @@ async def test_full_workflow(client: AsyncClient):
 
     sess3_resp = await client.post(
         f"/api/v1/workflows/{wf_id}/sessions",
-        json={"events": make_events(2)},
+        json={
+            "events": make_events(2),
+            "started_at": "2026-01-01T00:02:00Z",
+        },
     )
     assert sess3_resp.status_code == 201
     s3 = sess3_resp.json()
@@ -83,20 +88,6 @@ async def test_full_workflow(client: AsyncClient):
     assert sess_detail.status_code == 200
     assert "session_hash" in sess_detail.json()
 
-    events_list = await client.get(
-        f"/api/v1/workflows/{wf_id}/sessions/{s1['id']}/events"
-    )
-    assert events_list.status_code == 200
-    assert events_list.json()["total"] == 3
-    assert len(events_list.json()["events"]) == 3
-
-    first_event = events_list.json()["events"][0]
-    event_detail = await client.get(
-        f"/api/v1/workflows/{wf_id}/sessions/{s1['id']}/events/{first_event['id']}"
-    )
-    assert event_detail.status_code == 200
-    assert event_detail.json()["event_hash"] == first_event["event_hash"]
-
     proof_resp = await client.get(
         f"/api/v1/workflows/{wf_id}/sessions/{s2['id']}/proof"
     )
@@ -111,36 +102,19 @@ async def test_full_workflow(client: AsyncClient):
     )
 
     event_proof_resp = await client.get(
-        f"/api/v1/workflows/{wf_id}/sessions/{s1['id']}/events/{first_event['id']}/proof"
+        f"/api/v1/workflows/{wf_id}/sessions/{s1['id']}/events/0/proof"
     )
     assert event_proof_resp.status_code == 200
     event_proof = event_proof_resp.json()
-    assert len(event_proof["leaf_hash"]) == 64
-    assert event_proof["hex_root"] == s1["session_hash"]
+    assert event_proof["sequence_no"] == 0
+    assert len(event_proof["event_hash"]) == 64
+    assert event_proof["session_hash"] == s1["session_hash"]
     assert len(event_proof["proof_path"]) > 0
-    assert verify_proof(
-        event_proof["leaf_hash"], event_proof["proof_path"], event_proof["hex_root"]
-    )
 
-    sess_verify_resp = await client.post(
-        f"/api/v1/workflows/{wf_id}/sessions/{s1['id']}/verify",
-        json={
-            "events": [
-                {
-                    "event_id": first_event["id"],
-                    "payload": {
-                        "event_type": "tool_call",
-                        "executor_type": "agent",
-                        "action": "step_0",
-                        "timestamp": "2026-01-01T00:00:00Z",
-                        "data": {"detail": "event 0"},
-                    },
-                }
-            ]
-        },
+    client_computed_hash = _compute_event_hash(0, make_payload(0))
+    assert verify_proof(
+        client_computed_hash, event_proof["proof_path"], event_proof["session_hash"]
     )
-    assert sess_verify_resp.status_code == 200
-    assert sess_verify_resp.json()["all_valid"] is True
 
     verify_resp = await client.post(
         f"/api/v1/workflows/{wf_id}/verify",
@@ -163,7 +137,7 @@ async def test_full_workflow(client: AsyncClient):
             "sessions": [
                 {
                     "session_id": s1["id"],
-                    "events": [{"sequence_no": 0, "payload": {"event_type": "error", "executor_type": "system", "action": "bad", "timestamp": "2026-01-01T00:00:00Z"}}],
+                    "events": [{"sequence_no": 0, "payload": {"wrong": "data"}}],
                 }
             ]
         },
@@ -195,6 +169,37 @@ async def test_full_workflow(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_verify_with_raw_events(client: AsyncClient):
+    wf_resp = await client.post(
+        "/api/v1/workflows",
+        json={"name": "Verify Raw Events"},
+    )
+    assert wf_resp.status_code == 201
+    wf_id = wf_resp.json()["id"]
+
+    sess_resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/sessions",
+        json={
+            "events": make_events(2),
+            "started_at": "2026-01-01T00:00:00Z",
+        },
+    )
+    assert sess_resp.status_code == 201
+    s = sess_resp.json()
+
+    verify_resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/verify",
+        json={
+            "sessions": [
+                {"session_id": s["id"], "events": make_events(2)},
+            ]
+        },
+    )
+    assert verify_resp.status_code == 200
+    assert verify_resp.json()["all_valid"] is True
+
+
+@pytest.mark.asyncio
 async def test_404s(client: AsyncClient):
     import uuid
 
@@ -204,6 +209,9 @@ async def test_404s(client: AsyncClient):
 
     r = await client.post(
         f"/api/v1/workflows/{fake_id}/sessions",
-        json={"events": make_events(1)},
+        json={
+            "events": make_events(1),
+            "started_at": "2026-01-01T00:00:00Z",
+        },
     )
     assert r.status_code == 404
