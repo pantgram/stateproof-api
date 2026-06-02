@@ -200,6 +200,122 @@ async def test_verify_with_raw_events(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_health_check(client: AsyncClient):
+    resp = await client.get("/api/v1/health")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_create_workflow_with_meta(client: AsyncClient):
+    wf_resp = await client.post(
+        "/api/v1/workflows",
+        json={"name": "Meta Workflow", "meta": {"env": "test", "version": 1}},
+    )
+    assert wf_resp.status_code == 201
+    wf = wf_resp.json()
+    assert wf["meta"] == {"env": "test", "version": 1}
+
+    detail = await client.get(f"/api/v1/workflows/{wf['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["meta"] == {"env": "test", "version": 1}
+
+
+@pytest.mark.asyncio
+async def test_update_workflow(client: AsyncClient):
+    wf_resp = await client.post(
+        "/api/v1/workflows",
+        json={"name": "Original"},
+    )
+    assert wf_resp.status_code == 201
+    wf_id = wf_resp.json()["id"]
+
+    patch_resp = await client.patch(
+        f"/api/v1/workflows/{wf_id}",
+        json={"name": "Updated", "meta": {"key": "val"}},
+    )
+    assert patch_resp.status_code == 200
+    patched = patch_resp.json()
+    assert patched["name"] == "Updated"
+    assert patched["meta"] == {"key": "val"}
+
+    detail = await client.get(f"/api/v1/workflows/{wf_id}")
+    assert detail.json()["name"] == "Updated"
+    assert detail.json()["meta"] == {"key": "val"}
+
+    patch_name_only = await client.patch(
+        f"/api/v1/workflows/{wf_id}",
+        json={"name": "Name Only"},
+    )
+    assert patch_name_only.status_code == 200
+    assert patch_name_only.json()["name"] == "Name Only"
+    assert patch_name_only.json()["meta"] == {"key": "val"}
+
+
+@pytest.mark.asyncio
+async def test_update_workflow_404(client: AsyncClient):
+    import uuid
+
+    r = await client.patch(
+        f"/api/v1/workflows/{uuid.uuid4()}",
+        json={"name": "Nope"},
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_workflow_tree_nodes(client: AsyncClient):
+    wf_resp = await client.post(
+        "/api/v1/workflows",
+        json={"name": "Tree Nodes WF"},
+    )
+    wf_id = wf_resp.json()["id"]
+
+    await client.post(
+        f"/api/v1/workflows/{wf_id}/sessions",
+        json={"events": make_events(3), "started_at": "2026-01-01T00:00:00Z"},
+    )
+
+    nodes_resp = await client.get(f"/api/v1/workflows/{wf_id}/tree-nodes")
+    assert nodes_resp.status_code == 200
+    data = nodes_resp.json()
+    assert data["total"] > 0
+    assert len(data["workflow_tree_nodes"]) == data["total"]
+    node = data["workflow_tree_nodes"][0]
+    assert "hash" in node
+    assert "level" in node
+    assert "position" in node
+    assert "is_leaf" in node
+
+
+@pytest.mark.asyncio
+async def test_session_tree_nodes(client: AsyncClient):
+    wf_resp = await client.post(
+        "/api/v1/workflows",
+        json={"name": "Session Tree Nodes WF"},
+    )
+    wf_id = wf_resp.json()["id"]
+
+    sess_resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/sessions",
+        json={"events": make_events(3), "started_at": "2026-01-01T00:00:00Z"},
+    )
+    sess_id = sess_resp.json()["id"]
+
+    nodes_resp = await client.get(
+        f"/api/v1/workflows/{wf_id}/sessions/{sess_id}/tree-nodes"
+    )
+    assert nodes_resp.status_code == 200
+    data = nodes_resp.json()
+    assert data["total"] > 0
+    assert len(data["session_tree_nodes"]) == data["total"]
+    leaf_nodes = [n for n in data["session_tree_nodes"] if n["is_leaf"]]
+    assert len(leaf_nodes) == 3
+    for n in leaf_nodes:
+        assert n["sequence_no"] is not None
+
+
+@pytest.mark.asyncio
 async def test_404s(client: AsyncClient):
     import uuid
 
@@ -213,5 +329,36 @@ async def test_404s(client: AsyncClient):
             "events": make_events(1),
             "started_at": "2026-01-01T00:00:00Z",
         },
+    )
+    assert r.status_code == 404
+
+    r = await client.get(f"/api/v1/workflows/{fake_id}/sessions/{uuid.uuid4()}")
+    assert r.status_code == 404
+
+    r = await client.get(f"/api/v1/workflows/{fake_id}/sessions/{uuid.uuid4()}/proof")
+    assert r.status_code == 404
+
+    r = await client.get(
+        f"/api/v1/workflows/{fake_id}/sessions/{uuid.uuid4()}/events/0/proof"
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_event_proof_out_of_range(client: AsyncClient):
+    wf_resp = await client.post(
+        "/api/v1/workflows",
+        json={"name": "Event 404 WF"},
+    )
+    wf_id = wf_resp.json()["id"]
+
+    sess_resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/sessions",
+        json={"events": make_events(2), "started_at": "2026-01-01T00:00:00Z"},
+    )
+    sess_id = sess_resp.json()["id"]
+
+    r = await client.get(
+        f"/api/v1/workflows/{wf_id}/sessions/{sess_id}/events/99/proof"
     )
     assert r.status_code == 404

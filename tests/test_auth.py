@@ -427,3 +427,263 @@ async def test_reset_password_revokes_refresh_tokens(client: AsyncClient):
         json={"refresh_token": refresh_token},
     )
     assert refresh_resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_login_pending_user_rejected(client: AsyncClient):
+    await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "organization_name": "PendingLogin Corp",
+            "email": "admin@pendinglogin.com",
+            "password": "secret123",
+        },
+    )
+    await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "organization_name": "PendingLogin Corp",
+            "email": "pending@pendinglogin.com",
+            "password": "secret123",
+        },
+    )
+    resp = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "pending@pendinglogin.com", "password": "secret123"},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_create_client(client: AsyncClient):
+    admin_resp = await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "organization_name": "NonAdminCreate Corp",
+            "email": "admin@nonadmincreate.com",
+            "password": "secret123",
+        },
+    )
+    admin_token = admin_resp.json()["access_token"]
+
+    await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "organization_name": "NonAdminCreate Corp",
+            "email": "member@nonadmincreate.com",
+            "password": "secret123",
+        },
+    )
+
+    invites_resp = await client.get(
+        "/api/v1/auth/pending-invites",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    invites = invites_resp.json()["invites"]
+    invite_token = invites[-1]["token"]
+
+    await client.post(
+        f"/api/v1/auth/approve/{invite_token}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    member_login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "member@nonadmincreate.com", "password": "secret123"},
+    )
+    assert member_login.status_code == 200
+    member_token = member_login.json()["access_token"]
+
+    resp = await client.post(
+        "/api/v1/auth/clients",
+        json={"name": "unauthorized-client"},
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_list_clients(client: AsyncClient):
+    admin_resp = await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "organization_name": "NonAdminList Corp",
+            "email": "admin@nonadminlist.com",
+            "password": "secret123",
+        },
+    )
+    admin_token = admin_resp.json()["access_token"]
+
+    await client.post(
+        "/api/v1/auth/clients",
+        json={"name": "test-client"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "organization_name": "NonAdminList Corp",
+            "email": "member@nonadminlist.com",
+            "password": "secret123",
+        },
+    )
+
+    invites_resp = await client.get(
+        "/api/v1/auth/pending-invites",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    invites = invites_resp.json()["invites"]
+    invite_token = invites[-1]["token"]
+
+    await client.post(
+        f"/api/v1/auth/approve/{invite_token}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    member_login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "member@nonadminlist.com", "password": "secret123"},
+    )
+    member_token = member_login.json()["access_token"]
+
+    resp = await client.get(
+        "/api/v1/auth/clients",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_me_with_full_name(client: AsyncClient):
+    signup_resp = await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "organization_name": "FullName Corp",
+            "email": "fullname@test.com",
+            "password": "secret123",
+            "full_name": "Test User",
+        },
+    )
+    token = signup_resp.json()["access_token"]
+    me_resp = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me_resp.status_code == 200
+    data = me_resp.json()
+    assert data["email"] == "fullname@test.com"
+    assert data["full_name"] == "Test User"
+    assert data["role"] == "admin"
+    assert "organization" in data
+    assert data["organization"]["name"] == "FullName Corp"
+
+
+@pytest.mark.asyncio
+async def test_revoke_nonexistent_token(client: AsyncClient):
+    resp = await client.post(
+        "/api/v1/auth/revoke",
+        json={"refresh_token": "nonexistent_token_value"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_nonexistent_client(client: AsyncClient):
+    import uuid
+
+    signup_resp = await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "organization_name": "DeleteNonexist Corp",
+            "email": "delnone@test.com",
+            "password": "secret123",
+        },
+    )
+    admin_token = signup_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    resp = await client.delete(f"/api/v1/auth/clients/{uuid.uuid4()}", headers=headers)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rotate_nonexistent_client(client: AsyncClient):
+    import uuid
+
+    signup_resp = await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "organization_name": "RotateNonexist Corp",
+            "email": "rotatenone@test.com",
+            "password": "secret123",
+        },
+    )
+    admin_token = signup_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    resp = await client.post(
+        f"/api/v1/auth/clients/{uuid.uuid4()}/rotate", headers=headers
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_approve_invalid_token(client: AsyncClient):
+    signup_resp = await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "organization_name": "BadApprove Corp",
+            "email": "badapprove@test.com",
+            "password": "secret123",
+        },
+    )
+    admin_token = signup_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    resp = await client.post(
+        "/api/v1/auth/approve/invalid_token_value",
+        headers=headers,
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_api_key_refresh_cycle(client: AsyncClient):
+    signup_resp = await client.post(
+        "/api/v1/auth/signup",
+        json={
+            "organization_name": "APIKeyRefresh Corp",
+            "email": "apirefresh@test.com",
+            "password": "secret123",
+        },
+    )
+    admin_token = signup_resp.json()["access_token"]
+
+    client_resp = await client.post(
+        "/api/v1/auth/clients",
+        json={"name": "refresh-test-client"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    api_key = client_resp.json()["api_key"]
+
+    token_resp = await client.post(
+        "/api/v1/auth/token",
+        json={"api_key": api_key},
+    )
+    assert token_resp.status_code == 200
+    refresh = token_resp.json()["refresh_token"]
+
+    refresh_resp = await client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": refresh},
+    )
+    assert refresh_resp.status_code == 200
+    assert "access_token" in refresh_resp.json()
+    assert "refresh_token" in refresh_resp.json()
+
+    reuse_resp = await client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": refresh},
+    )
+    assert reuse_resp.status_code == 401
