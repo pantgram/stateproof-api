@@ -54,6 +54,7 @@ class EventAddRequest(BaseModel):
 
 class EventAddItem(BaseModel):
     sequence_no: int
+    data_hash: str
     event_hash: str
 
 
@@ -68,6 +69,7 @@ class SessionCloseRequest(BaseModel):
 
 class EventProofOut(BaseModel):
     sequence_no: int
+    data_hash: str
     event_hash: str
     proof_path: list[ProofStep]
 

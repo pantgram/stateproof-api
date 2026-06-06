@@ -8,9 +8,14 @@ from httpx import AsyncClient
 from src.services.merkle import verify_proof
 
 
-def _compute_event_hash(sequence_no: int, payload: dict) -> str:
+def _compute_data_hash(payload: dict) -> str:
     payload_str = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(f"{sequence_no}{payload_str}".encode()).hexdigest()
+    return hashlib.sha256(payload_str.encode()).hexdigest()
+
+
+def _compute_event_hash(session_id: str, sequence_no: int, payload: dict) -> str:
+    data_hash = _compute_data_hash(payload)
+    return hashlib.sha256(f"{data_hash}{sequence_no}{session_id}".encode()).hexdigest()
 
 
 def make_payload(i: int) -> dict:
@@ -73,9 +78,7 @@ async def test_full_workflow(client: AsyncClient):
     assert sess_list.status_code == 200
     assert sess_list.json()["total"] == 3
 
-    sess_detail = await client.get(
-        f"/api/v1/workflows/{wf_id}/sessions/{s1['id']}"
-    )
+    sess_detail = await client.get(f"/api/v1/workflows/{wf_id}/sessions/{s1['id']}")
     assert sess_detail.status_code == 200
     assert "session_root" in sess_detail.json()
 
@@ -86,11 +89,12 @@ async def test_full_workflow(client: AsyncClient):
     assert event_proof_resp.status_code == 200
     event_proof = event_proof_resp.json()
     assert event_proof["sequence_no"] == 0
+    assert len(event_proof["data_hash"]) == 64
     assert len(event_proof["event_hash"]) == 64
     assert event_proof["session_root"] == s1["session_root"]
     assert len(event_proof["proof_path"]) > 0
 
-    client_computed_hash = _compute_event_hash(0, make_payload(0))
+    client_computed_hash = _compute_event_hash(s1["id"], 0, make_payload(0))
     assert verify_proof(
         client_computed_hash, event_proof["proof_path"], event_proof["session_root"]
     )
@@ -258,7 +262,13 @@ async def test_incremental_session_full_flow(client: AsyncClient):
 
     add2_resp = await client.post(
         f"/api/v1/workflows/{wf_id}/sessions/{sess_id}/events",
-        json={"events": [{"payload": make_payload(2)}, {"payload": make_payload(3)}, {"payload": make_payload(4)}]},
+        json={
+            "events": [
+                {"payload": make_payload(2)},
+                {"payload": make_payload(3)},
+                {"payload": make_payload(4)},
+            ]
+        },
     )
     assert add2_resp.status_code == 200
     add2 = add2_resp.json()
@@ -279,15 +289,14 @@ async def test_incremental_session_full_flow(client: AsyncClient):
 
     for i, ep in enumerate(closed["event_proofs"]):
         assert ep["sequence_no"] == i
+        assert len(ep["data_hash"]) == 64
         assert len(ep["event_hash"]) == 64
         assert len(ep["proof_path"]) > 0
-        client_hash = _compute_event_hash(i, make_payload(i))
+        client_hash = _compute_event_hash(sess_id, i, make_payload(i))
         assert ep["event_hash"] == client_hash
         assert verify_proof(client_hash, ep["proof_path"], closed["session_root"])
 
-    detail_resp = await client.get(
-        f"/api/v1/workflows/{wf_id}/sessions/{sess_id}"
-    )
+    detail_resp = await client.get(f"/api/v1/workflows/{wf_id}/sessions/{sess_id}")
     assert detail_resp.status_code == 200
     assert detail_resp.json()["session_root"] == closed["session_root"]
     assert detail_resp.json()["status"] == "completed"
@@ -393,9 +402,7 @@ async def test_incremental_session_start_with_meta(client: AsyncClient):
     sess = start_resp.json()
     assert sess["status"] == "pending"
 
-    detail_resp = await client.get(
-        f"/api/v1/workflows/{wf_id}/sessions/{sess['id']}"
-    )
+    detail_resp = await client.get(f"/api/v1/workflows/{wf_id}/sessions/{sess['id']}")
     assert detail_resp.status_code == 200
     detail = detail_resp.json()
     assert detail["meta"] == {"source": "stream"}
@@ -417,7 +424,13 @@ async def test_incremental_session_proofs_match_individual_proof(client: AsyncCl
 
     await client.post(
         f"/api/v1/workflows/{wf_id}/sessions/{sess_id}/events",
-        json={"events": [{"payload": make_payload(0)}, {"payload": make_payload(1)}, {"payload": make_payload(2)}]},
+        json={
+            "events": [
+                {"payload": make_payload(0)},
+                {"payload": make_payload(1)},
+                {"payload": make_payload(2)},
+            ]
+        },
     )
 
     close_resp = await client.post(
@@ -429,7 +442,10 @@ async def test_incremental_session_proofs_match_individual_proof(client: AsyncCl
     for ep in closed["event_proofs"]:
         individual_resp = await client.post(
             f"/api/v1/workflows/{wf_id}/sessions/{sess_id}/events/proof",
-            json={"sequence_no": ep["sequence_no"], "payload": make_payload(ep["sequence_no"])},
+            json={
+                "sequence_no": ep["sequence_no"],
+                "payload": make_payload(ep["sequence_no"]),
+            },
         )
         assert individual_resp.status_code == 200
         individual = individual_resp.json()
@@ -468,10 +484,10 @@ async def test_incremental_session_close_with_failed_status(client: AsyncClient)
     assert len(closed["event_proofs"]) == 2
 
     for ep in closed["event_proofs"]:
-        client_hash = _compute_event_hash(ep["sequence_no"], make_payload(ep["sequence_no"]))
+        client_hash = _compute_event_hash(
+            sess_id, ep["sequence_no"], make_payload(ep["sequence_no"])
+        )
         assert verify_proof(client_hash, ep["proof_path"], closed["session_root"])
 
-    detail_resp = await client.get(
-        f"/api/v1/workflows/{wf_id}/sessions/{sess_id}"
-    )
+    detail_resp = await client.get(f"/api/v1/workflows/{wf_id}/sessions/{sess_id}")
     assert detail_resp.json()["status"] == "failed"

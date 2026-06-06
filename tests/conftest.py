@@ -46,19 +46,23 @@ async def _clean_data():
 @pytest_asyncio.fixture(autouse=True)
 async def _ensure_seed():
     async with TestSessionFactory() as db:
-        result = await db.execute(select(Organization).where(Organization.id == TEST_ORG_ID))
+        result = await db.execute(
+            select(Organization).where(Organization.id == TEST_ORG_ID)
+        )
         if result.scalar_one_or_none() is None:
             db.add(Organization(id=TEST_ORG_ID, name="Test Org"))
         result = await db.execute(select(User).where(User.id == TEST_USER_ID))
         if result.scalar_one_or_none() is None:
-            db.add(User(
-                id=TEST_USER_ID,
-                organization_id=TEST_ORG_ID,
-                email="test@test.com",
-                hashed_password="x",
-                status=UserStatus.active,
-                role=UserRole.admin,
-            ))
+            db.add(
+                User(
+                    id=TEST_USER_ID,
+                    organization_id=TEST_ORG_ID,
+                    email="test@test.com",
+                    hashed_password="x",
+                    status=UserStatus.active,
+                    role=UserRole.admin,
+                )
+            )
         await db.commit()
 
 

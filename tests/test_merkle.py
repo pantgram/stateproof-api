@@ -1,33 +1,78 @@
+import uuid
+
 import pytest
 
 from src.services.merkle import (
     build_tree,
+    compute_data_hash,
     compute_raw_event_hash,
     get_proof,
     verify_proof,
 )
 
 
-class TestComputeRawEventHash:
+class TestComputeDataHash:
     def test_basic(self):
-        h = compute_raw_event_hash(0, {"action": "test"})
+        h = compute_data_hash({"action": "test"})
         assert len(h) == 64
         assert all(c in "0123456789abcdef" for c in h)
 
     def test_deterministic(self):
-        h1 = compute_raw_event_hash(1, {"action": "a"})
-        h2 = compute_raw_event_hash(1, {"action": "a"})
+        h1 = compute_data_hash({"action": "a"})
+        h2 = compute_data_hash({"action": "a"})
         assert h1 == h2
 
     def test_different_payloads(self):
-        h1 = compute_raw_event_hash(0, {"action": "a"})
-        h2 = compute_raw_event_hash(0, {"action": "b"})
+        h1 = compute_data_hash({"action": "a"})
+        h2 = compute_data_hash({"action": "b"})
         assert h1 != h2
 
+    def test_same_payload_across_sequence_nos(self):
+        payload = {"action": "same"}
+        h1 = compute_data_hash(payload)
+        h2 = compute_data_hash(payload)
+        assert h1 == h2
+
+
+class TestComputeRawEventHash:
+    def test_basic(self):
+        sid = uuid.uuid4()
+        data_hash, event_hash = compute_raw_event_hash(sid, 0, {"action": "test"})
+        assert len(data_hash) == 64
+        assert len(event_hash) == 64
+        assert all(c in "0123456789abcdef" for c in event_hash)
+
+    def test_deterministic(self):
+        sid = uuid.uuid4()
+        dh1, eh1 = compute_raw_event_hash(sid, 1, {"action": "a"})
+        dh2, eh2 = compute_raw_event_hash(sid, 1, {"action": "a"})
+        assert dh1 == dh2
+        assert eh1 == eh2
+
+    def test_different_payloads(self):
+        sid = uuid.uuid4()
+        _, eh1 = compute_raw_event_hash(sid, 0, {"action": "a"})
+        _, eh2 = compute_raw_event_hash(sid, 0, {"action": "b"})
+        assert eh1 != eh2
+
     def test_different_sequence_no(self):
-        h1 = compute_raw_event_hash(0, {"action": "a"})
-        h2 = compute_raw_event_hash(1, {"action": "a"})
-        assert h1 != h2
+        sid = uuid.uuid4()
+        dh1, eh1 = compute_raw_event_hash(sid, 0, {"action": "a"})
+        dh2, eh2 = compute_raw_event_hash(sid, 1, {"action": "a"})
+        assert dh1 == dh2
+        assert eh1 != eh2
+
+    def test_different_session_id(self):
+        sid1 = uuid.uuid4()
+        sid2 = uuid.uuid4()
+        _, eh1 = compute_raw_event_hash(sid1, 0, {"action": "a"})
+        _, eh2 = compute_raw_event_hash(sid2, 0, {"action": "a"})
+        assert eh1 != eh2
+
+    def test_data_hash_matches_compute_data_hash(self):
+        sid = uuid.uuid4()
+        data_hash, _ = compute_raw_event_hash(sid, 0, {"action": "test"})
+        assert data_hash == compute_data_hash({"action": "test"})
 
 
 class TestBuildTree:

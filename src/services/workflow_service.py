@@ -37,9 +37,7 @@ async def get_workflow(
 async def get_workflow_by_id(
     db: AsyncSession, workflow_id: uuid.UUID
 ) -> Workflow | None:
-    result = await db.execute(
-        select(Workflow).where(Workflow.id == workflow_id)
-    )
+    result = await db.execute(select(Workflow).where(Workflow.id == workflow_id))
     return result.scalar_one_or_none()
 
 
@@ -56,10 +54,16 @@ async def list_workflows(
     db: AsyncSession, organization_id: uuid.UUID, offset: int = 0, limit: int = 50
 ) -> tuple[list[Workflow], int]:
     cond = Workflow.organization_id == organization_id
-    total = (await db.execute(select(func.count()).select_from(Workflow).where(cond))).scalar_one()
+    total = (
+        await db.execute(select(func.count()).select_from(Workflow).where(cond))
+    ).scalar_one()
 
     result = await db.execute(
-        select(Workflow).where(cond).order_by(Workflow.created_at.desc()).offset(offset).limit(limit)
+        select(Workflow)
+        .where(cond)
+        .order_by(Workflow.created_at.desc())
+        .offset(offset)
+        .limit(limit)
     )
     return list(result.scalars().all()), total
 

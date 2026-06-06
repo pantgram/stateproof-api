@@ -17,8 +17,12 @@ class Settings(BaseSettings):
     port: int = 8000
     cors_origins: list[str] = ["*"]
 
-    database_url: str = "postgresql+asyncpg://stateproof:stateproof@localhost:5432/stateproof"
-    test_database_url: str = "postgresql+asyncpg://stateproof:stateproof@localhost:5432/stateproof_test"
+    database_url: str = (
+        "postgresql+asyncpg://stateproof:stateproof@localhost:5432/stateproof"
+    )
+    test_database_url: str = (
+        "postgresql+asyncpg://stateproof:stateproof@localhost:5432/stateproof_test"
+    )
 
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"

@@ -112,7 +112,9 @@ async def approve_user(
     admin: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    user = await auth_service.approve_user(db, token, organization_id=admin.organization_id)
+    user = await auth_service.approve_user(
+        db, token, organization_id=admin.organization_id
+    )
     if user is None:
         raise HTTPException(status_code=404, detail="Invalid or expired invite token")
 

@@ -23,6 +23,7 @@ from src.models.auth import (
 )
 from src.schemas.auth import ClientCreate, UserSignup
 
+
 def _generate_api_key() -> str:
     return f"sp_{secrets.token_hex(32)}"
 
@@ -56,7 +57,9 @@ def create_access_token(
         "iat": now,
         "exp": expire,
     }
-    token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    token = jwt.encode(
+        payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm
+    )
     return token, expires_in
 
 
@@ -84,7 +87,9 @@ async def create_user_tokens(db: AsyncSession, user: User) -> dict:
 
 
 async def create_client_tokens(db: AsyncSession, client: Client) -> dict:
-    access_token, expires_in = create_access_token(client.id, client.organization_id, "api_key")
+    access_token, expires_in = create_access_token(
+        client.id, client.organization_id, "api_key"
+    )
 
     now = datetime.now(timezone.utc)
     refresh_value = _generate_refresh_token_value()
@@ -179,10 +184,10 @@ async def _create_invite_token(
     return invite
 
 
-async def approve_user(db: AsyncSession, token: str, organization_id: uuid.UUID | None = None) -> User | None:
-    result = await db.execute(
-        select(InviteToken).where(InviteToken.token == token)
-    )
+async def approve_user(
+    db: AsyncSession, token: str, organization_id: uuid.UUID | None = None
+) -> User | None:
+    result = await db.execute(select(InviteToken).where(InviteToken.token == token))
     invite = result.scalar_one_or_none()
 
     if invite is None or invite.used:
@@ -207,9 +212,7 @@ async def approve_user(db: AsyncSession, token: str, organization_id: uuid.UUID 
     return user
 
 
-async def authenticate_user(
-    db: AsyncSession, email: str, password: str
-) -> User | None:
+async def authenticate_user(db: AsyncSession, email: str, password: str) -> User | None:
     result = await db.execute(
         select(User).where(User.email == email, User.status == UserStatus.active)
     )
@@ -221,18 +224,14 @@ async def authenticate_user(
     return user
 
 
-async def authenticate_by_api_key(
-    db: AsyncSession, api_key: str
-) -> Client | None:
+async def authenticate_by_api_key(db: AsyncSession, api_key: str) -> Client | None:
     result = await db.execute(
         select(Client).where(Client.api_key == api_key, Client.is_active.is_(True))
     )
     return result.scalar_one_or_none()
 
 
-async def refresh_user_token(
-    db: AsyncSession, refresh_token_value: str
-) -> dict | None:
+async def refresh_user_token(db: AsyncSession, refresh_token_value: str) -> dict | None:
     result = await db.execute(
         select(UserRefreshToken).where(UserRefreshToken.token == refresh_token_value)
     )
@@ -261,7 +260,9 @@ async def refresh_client_token(
     db: AsyncSession, refresh_token_value: str
 ) -> dict | None:
     result = await db.execute(
-        select(ClientRefreshToken).where(ClientRefreshToken.token == refresh_token_value)
+        select(ClientRefreshToken).where(
+            ClientRefreshToken.token == refresh_token_value
+        )
     )
     rt = result.scalar_one_or_none()
 
@@ -313,9 +314,15 @@ async def list_clients(
     db: AsyncSession, organization_id: uuid.UUID, offset: int = 0, limit: int = 50
 ) -> tuple[list[Client], int]:
     cond = Client.organization_id == organization_id
-    total = (await db.execute(select(func.count()).select_from(Client).where(cond))).scalar_one()
+    total = (
+        await db.execute(select(func.count()).select_from(Client).where(cond))
+    ).scalar_one()
     result = await db.execute(
-        select(Client).where(cond).order_by(Client.created_at.desc()).offset(offset).limit(limit)
+        select(Client)
+        .where(cond)
+        .order_by(Client.created_at.desc())
+        .offset(offset)
+        .limit(limit)
     )
     return list(result.scalars().all()), total
 
@@ -343,9 +350,7 @@ async def rotate_client_key(
     return client
 
 
-async def revoke_user_refresh_token(
-    db: AsyncSession, refresh_token_value: str
-) -> bool:
+async def revoke_user_refresh_token(db: AsyncSession, refresh_token_value: str) -> bool:
     result = await db.execute(
         select(UserRefreshToken).where(UserRefreshToken.token == refresh_token_value)
     )
@@ -361,7 +366,9 @@ async def revoke_client_refresh_token(
     db: AsyncSession, refresh_token_value: str
 ) -> bool:
     result = await db.execute(
-        select(ClientRefreshToken).where(ClientRefreshToken.token == refresh_token_value)
+        select(ClientRefreshToken).where(
+            ClientRefreshToken.token == refresh_token_value
+        )
     )
     rt = result.scalar_one_or_none()
     if rt is None:
@@ -371,7 +378,9 @@ async def revoke_client_refresh_token(
     return True
 
 
-async def list_pending_invites(db: AsyncSession, organization_id: uuid.UUID) -> list[dict]:
+async def list_pending_invites(
+    db: AsyncSession, organization_id: uuid.UUID
+) -> list[dict]:
     now = datetime.now(timezone.utc)
     result = await db.execute(
         select(InviteToken, User.email)
@@ -414,7 +423,9 @@ async def request_password_reset(db: AsyncSession, email: str) -> str | None:
     return reset.token
 
 
-async def reset_password(db: AsyncSession, token: str, new_password: str) -> User | None:
+async def reset_password(
+    db: AsyncSession, token: str, new_password: str
+) -> User | None:
     result = await db.execute(
         select(PasswordResetToken).where(PasswordResetToken.token == token)
     )

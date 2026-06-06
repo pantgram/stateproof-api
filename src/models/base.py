@@ -21,7 +21,10 @@ class Workflow(Base):
     __tablename__ = "workflows"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()")
+        Uuid,
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("organizations.id", ondelete="CASCADE")
@@ -34,17 +37,20 @@ class Workflow(Base):
     )
     meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
-    sessions: Mapped[list["Session"]] = relationship(back_populates="workflow", cascade="all, delete-orphan", passive_deletes=True)
+    sessions: Mapped[list["Session"]] = relationship(
+        back_populates="workflow", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class Session(Base):
     __tablename__ = "sessions"
-    __table_args__ = (
-        Index("ix_sessions_workflow_id", "workflow_id"),
-    )
+    __table_args__ = (Index("ix_sessions_workflow_id", "workflow_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()")
+        Uuid,
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
     )
     workflow_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("workflows.id", ondelete="CASCADE")
@@ -64,25 +70,32 @@ class Session(Base):
     meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     workflow: Mapped["Workflow"] = relationship(back_populates="sessions")
-    events: Mapped[list["Event"]] = relationship(back_populates="session", cascade="all, delete-orphan", passive_deletes=True)
+    events: Mapped[list["Event"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class Event(Base):
     __tablename__ = "events"
     __table_args__ = (
         Index("ix_events_session_id", "session_id"),
-        Index("ix_events_session_id_sequence_no", "session_id", "sequence_no", unique=True),
+        Index(
+            "ix_events_session_id_sequence_no", "session_id", "sequence_no", unique=True
+        ),
+        Index("ix_events_data_hash", "data_hash"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()")
+        Uuid,
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("sessions.id", ondelete="CASCADE")
     )
     sequence_no: Mapped[int] = mapped_column(Integer)
+    data_hash: Mapped[str] = mapped_column(String(64))
     event_hash: Mapped[str] = mapped_column(String(64))
 
     session: Mapped["Session"] = relationship(back_populates="events")
-
-

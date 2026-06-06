@@ -1,13 +1,24 @@
 import hashlib
 import json
+import uuid
 from dataclasses import dataclass, field
 
 ZERO_HASH = "0" * 64
 
 
-def compute_raw_event_hash(sequence_no: int, payload: dict) -> str:
+def compute_data_hash(payload: dict) -> str:
     payload_str = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(f"{sequence_no}{payload_str}".encode()).hexdigest()
+    return hashlib.sha256(payload_str.encode()).hexdigest()
+
+
+def compute_raw_event_hash(
+    session_id: uuid.UUID, sequence_no: int, payload: dict
+) -> tuple[str, str]:
+    data_hash = compute_data_hash(payload)
+    event_hash = hashlib.sha256(
+        f"{data_hash}{sequence_no}{session_id}".encode()
+    ).hexdigest()
+    return data_hash, event_hash
 
 
 def _hash_leaf(entry: bytes) -> bytes:
@@ -73,9 +84,7 @@ class MerkleTree:
             nodes = self._levels[level]
             if idx % 2 == 0:
                 if idx + 1 < len(nodes):
-                    proof.append(
-                        {"hash": nodes[idx + 1].hex(), "direction": "right"}
-                    )
+                    proof.append({"hash": nodes[idx + 1].hex(), "direction": "right"})
             else:
                 proof.append({"hash": nodes[idx - 1].hex(), "direction": "left"})
             idx //= 2

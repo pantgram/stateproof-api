@@ -19,7 +19,12 @@ from src.schemas.session import (
     SessionSubmitResponse,
 )
 from src.schemas.verify import EventProofRequest, EventProofResponse
-from src.schemas.workflow import WorkflowCreate, WorkflowListResponse, WorkflowResponse, WorkflowUpdate
+from src.schemas.workflow import (
+    WorkflowCreate,
+    WorkflowListResponse,
+    WorkflowResponse,
+    WorkflowUpdate,
+)
 from src.services import session_service, workflow_service
 from src.services.merkle import build_tree
 
@@ -78,7 +83,9 @@ async def update_workflow(
     return wf
 
 
-@router.post("/{workflow_id}/sessions", response_model=SessionSubmitResponse, status_code=201)
+@router.post(
+    "/{workflow_id}/sessions", response_model=SessionSubmitResponse, status_code=201
+)
 async def create_session(
     workflow_id: uuid.UUID,
     data: SessionCreate,
@@ -155,7 +162,11 @@ async def get_event_proof(
     return result
 
 
-@router.post("/{workflow_id}/sessions/start", response_model=SessionSubmitResponse, status_code=201)
+@router.post(
+    "/{workflow_id}/sessions/start",
+    response_model=SessionSubmitResponse,
+    status_code=201,
+)
 async def start_session(
     workflow_id: uuid.UUID,
     data: SessionStart,
@@ -197,7 +208,11 @@ async def add_events(
     await db.commit()
     return {
         "events": [
-            {"sequence_no": e.sequence_no, "event_hash": e.event_hash}
+            {
+                "sequence_no": e.sequence_no,
+                "data_hash": e.data_hash,
+                "event_hash": e.event_hash,
+            }
             for e in new_events
         ]
     }
@@ -216,8 +231,7 @@ async def close_session(
 ):
     try:
         sess = await session_service.close_session(
-            db, workflow_id, session_id,
-            SessionStatus(data.status), data.ended_at
+            db, workflow_id, session_id, SessionStatus(data.status), data.ended_at
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
