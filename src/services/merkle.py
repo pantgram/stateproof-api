@@ -10,29 +10,12 @@ def compute_raw_event_hash(sequence_no: int, payload: dict) -> str:
     return hashlib.sha256(f"{sequence_no}{payload_str}".encode()).hexdigest()
 
 
-def compute_leaf_hash(session_hash: str, prev_hash: str) -> str:
-    return hashlib.sha256(f"{session_hash}{prev_hash}".encode()).hexdigest()
-
-
 def _hash_leaf(entry: bytes) -> bytes:
     return hashlib.sha256(b"\x00" + entry).digest()
 
 
 def _hash_node(left: bytes, right: bytes) -> bytes:
     return hashlib.sha256(b"\x01" + left + right).digest()
-
-
-@dataclass
-class TreeNodeInfo:
-    hash: str
-    level: int
-    position: int
-    is_leaf: bool
-    entry: str | None = None
-    left_hash: str | None = None
-    right_hash: str | None = None
-    parent_hash: str | None = None
-    entity_id: str | None = None
 
 
 @dataclass
@@ -99,69 +82,12 @@ class MerkleTree:
 
         return proof
 
-    def get_node_infos(
-        self, entity_ids: list[str] | None = None
-    ) -> list[TreeNodeInfo]:
-        nodes: list[TreeNodeInfo] = []
-
-        for level_idx, level in enumerate(self._levels):
-            for pos, node_hash_bytes in enumerate(level):
-                is_leaf = level_idx == 0
-
-                left_hash: str | None = None
-                right_hash: str | None = None
-                if level_idx > 0:
-                    prev_level = self._levels[level_idx - 1]
-                    left_idx = pos * 2
-                    right_idx = pos * 2 + 1
-                    if right_idx < len(prev_level):
-                        left_hash = prev_level[left_idx].hex()
-                        right_hash = prev_level[right_idx].hex()
-
-                parent_hash: str | None = None
-                if level_idx < len(self._levels) - 1:
-                    next_level = self._levels[level_idx + 1]
-                    parent_pos = pos // 2
-                    if parent_pos < len(next_level):
-                        parent_hash = next_level[parent_pos].hex()
-
-                entry: str | None = None
-                entity_id: str | None = None
-                if is_leaf:
-                    if pos < len(self._entries):
-                        entry = self._entries[pos].decode()
-                    if entity_ids and pos < len(entity_ids):
-                        entity_id = entity_ids[pos]
-
-                nodes.append(
-                    TreeNodeInfo(
-                        hash=node_hash_bytes.hex(),
-                        level=level_idx,
-                        position=pos,
-                        is_leaf=is_leaf,
-                        entry=entry,
-                        left_hash=left_hash,
-                        right_hash=right_hash,
-                        parent_hash=parent_hash,
-                        entity_id=entity_id,
-                    )
-                )
-
-        return nodes
-
 
 def build_tree(leaf_hashes: list[str]) -> MerkleTree:
     tree = MerkleTree()
     if leaf_hashes:
         tree.extend([h.encode() for h in leaf_hashes])
     return tree
-
-
-def build_node_infos(
-    tree: MerkleTree,
-    entity_ids: list[str] | None = None,
-) -> list[TreeNodeInfo]:
-    return tree.get_node_infos(entity_ids)
 
 
 def get_proof(tree: MerkleTree, leaf_index: int) -> list[dict]:

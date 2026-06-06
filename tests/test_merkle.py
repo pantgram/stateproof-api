@@ -1,10 +1,7 @@
 import pytest
 
 from src.services.merkle import (
-    ZERO_HASH,
-    build_node_infos,
     build_tree,
-    compute_leaf_hash,
     compute_raw_event_hash,
     get_proof,
     verify_proof,
@@ -33,26 +30,11 @@ class TestComputeRawEventHash:
         assert h1 != h2
 
 
-class TestComputeLeafHash:
-    def test_basic(self):
-        h = compute_leaf_hash("abc", "def")
-        assert len(h) == 64
-
-    def test_prev_hash_affects_result(self):
-        h1 = compute_leaf_hash("abc", "000")
-        h2 = compute_leaf_hash("abc", "111")
-        assert h1 != h2
-
-    def test_first_leaf(self):
-        h = compute_leaf_hash("abc", ZERO_HASH)
-        assert len(h) == 64
-
-
 class TestBuildTree:
     def test_single_leaf(self):
         tree = build_tree(["aa"])
         assert tree.size == 1
-        assert tree.root != ZERO_HASH
+        assert tree.root != "0" * 64
         assert len(tree.root) == 64
 
     def test_two_leaves(self):
@@ -112,31 +94,3 @@ class TestProofs:
             for i, p in enumerate(proof)
         ]
         assert not verify_proof("bb", tampered, tree.root)
-
-
-class TestBuildNodeInfos:
-    def test_basic(self):
-        tree = build_tree(["aa", "bb", "cc"])
-        nodes = build_node_infos(tree, entity_ids=["s1", "s2", "s3"])
-        assert len(nodes) > 0
-
-        leaf_nodes = [n for n in nodes if n.is_leaf]
-        assert len(leaf_nodes) == 3
-
-        for i, n in enumerate(leaf_nodes):
-            assert n.entity_id == f"s{i + 1}"
-            assert n.level == 0
-            assert n.position == i
-            assert n.parent_hash is not None
-            assert n.entry is not None
-
-        root_nodes = [n for n in nodes if n.parent_hash is None]
-        assert len(root_nodes) == 1
-        assert root_nodes[0].hash == tree.root
-
-    def test_promoted_nodes_have_no_children(self):
-        tree = build_tree(["aa", "bb", "cc"])
-        nodes = build_node_infos(tree, entity_ids=["s1", "s2", "s3"])
-        internal = [n for n in nodes if not n.is_leaf]
-        promoted = [n for n in internal if n.left_hash is None and n.right_hash is None]
-        assert len(promoted) >= 1

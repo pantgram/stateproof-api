@@ -12,7 +12,7 @@ from src.middleware.config import settings
 from src.middleware.rate_limit import limiter
 from src.models import Base
 from src.models.auth import Organization, User, UserRole, UserStatus
-from src.models.base import WorkflowTreeNode, SessionTreeNode, Session, Workflow
+from src.models.base import Event, Session, Workflow
 
 TEST_ORG_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 TEST_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
@@ -35,8 +35,7 @@ async def _setup_tables():
 async def _clean_data():
     yield
     async with TestSessionFactory() as db:
-        await db.execute(delete(WorkflowTreeNode))
-        await db.execute(delete(SessionTreeNode))
+        await db.execute(delete(Event))
         await db.execute(delete(Session))
         await db.execute(delete(Workflow))
         await db.execute(delete(User).where(User.id != TEST_USER_ID))

@@ -1,10 +1,10 @@
 # StateProof API
 
-Cryptographic proof of state for automated workflows using two-level Merkle trees. Each workflow maintains a Merkle tree of sessions, and each session maintains its own Merkle tree of events. This allows tamper-evident verification that no event or session has been altered after the fact.
+Cryptographic proof of state for automated workflows using Merkle trees. Each session maintains a Merkle tree of events. This allows tamper-evident verification that no event has been altered after the fact.
 
 ## Features
 
-- **Two-level Merkle trees** -- every session has an event-level tree, and every workflow has a session-level tree; proofs can be generated and verified independently at both levels
+- **Session-level Merkle trees** -- every session has an event-level tree; proofs can be generated and verified independently
 - **Multi-tenant** -- organizations, users, and API-key clients with scoped access
 - **User signup with invite flow** -- first user in an org is auto-approved; subsequent users require admin approval via an invite token
 - **JWT authentication** -- access tokens (short-lived) and refresh tokens (revocable, with rotation reuse detection)
@@ -101,10 +101,7 @@ All endpoints are under `/api/v1`. Authentication uses `Bearer` tokens.
 | POST | `/workflows/{id}/sessions` | API Key | Submit a session with events |
 | GET | `/workflows/{id}/sessions` | Any | List sessions |
 | GET | `/workflows/{id}/sessions/{sid}` | Any | Get session details |
-| GET | `/workflows/{id}/sessions/{sid}/proof` | Any | Get Merkle proof for a session |
 | GET | `/workflows/{id}/sessions/{sid}/events/{seq}/proof` | Any | Get Merkle proof for an event |
-| POST | `/workflows/{id}/verify` | Any | Verify sessions against the workflow tree |
-| GET | `/workflows/{id}/tree-nodes` | Any | List workflow tree nodes |
 | GET | `/workflows/{id}/sessions/{sid}/tree-nodes` | Any | List session tree nodes |
 
 ### Verification
@@ -129,7 +126,7 @@ src/
 │   ├── auth.py          # JWT decoding, user/client resolution, dependencies
 │   └── rate_limit.py    # slowapi IP-based rate limiter
 ├── models/
-│   ├── base.py          # SQLAlchemy declarative base, Workflow, Session, SessionTreeNode, WorkflowTreeNode
+│   ├── base.py          # SQLAlchemy declarative base, Workflow, Session, SessionTreeNode
 │   └── auth.py          # Organization, User, Client, token models
 ├── schemas/             # Pydantic request/response schemas
 └── services/
@@ -149,17 +146,17 @@ alembic/                 # Database migrations
 
 ## How It Works
 
-### Two-Level Merkle Trees
+### Session-Level Merkle Trees
 
-Each workflow maintains a Merkle tree where leaves are session hashes. Each session maintains its own Merkle tree where leaves are event hashes. Session leaf hashes incorporate a chain of previous hashes, making the structure append-only and tamper-evident.
+Each session maintains a Merkle tree where leaves are event hashes. Session leaf hashes incorporate a chain of previous hashes, making the structure append-only and tamper-evident.
 
 ```
-Workflow Tree                    Session Tree
-     Root                           Root
-    /    \                         /    \
-  N1      N2                  E1_leaf   E2_leaf
- /  \     |                     |         |
-S1   S2   S3               event_hash  event_hash
+Session Tree
+     Root
+    /    \
+E1_leaf   E2_leaf
+   |         |
+event_hash  event_hash
 ```
 
 ### Event Hashing
@@ -178,16 +175,13 @@ Raw event data is **never persisted** to the database -- only the hashes are sto
 2. Events are sorted by `sequence_no` and hashed using the convention above
 3. A session Merkle tree is built from the event hashes; `session_hash` is the root
 4. A `leaf_hash` is computed: `SHA-256(session_hash + prev_leaf_hash)` to chain sessions
-5. The session is appended as a leaf to the workflow Merkle tree
-6. The workflow root hash is updated
-7. Tree nodes for both levels are persisted for proof generation
+5. The session is persisted
+6. Tree nodes for the session are persisted for proof generation
 
 ### Verification
 
-- **Session proof** (`GET .../sessions/{id}/proof`): generates a Merkle proof from the session leaf to the workflow root
 - **Event proof** (`GET .../events/{seq}/proof`): generates a Merkle proof from the event leaf to the session root
-- **Workflow verify** (`POST .../verify`): recompute event hashes from raw events, verify they match stored session hashes and Merkle proofs
-- **Stateless verify** (`POST /verify`): verify a proof against a known root hash with no database access -- works for both session-level and event-level proofs
+- **Stateless verify** (`POST /verify`): verify a proof against a known root hash with no database access
 
 ## Configuration
 

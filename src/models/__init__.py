@@ -8,21 +8,20 @@ from src.models.auth import (
     UserRole,
     UserStatus,
 )
-from src.models.base import Base, Session, SessionStatus, SessionTreeNode, Workflow, WorkflowTreeNode
+from src.models.base import Base, Event, Session, SessionStatus, Workflow
 
 __all__ = [
     "Base",
     "Client",
     "ClientRefreshToken",
+    "Event",
     "InviteToken",
     "Organization",
     "Session",
     "SessionStatus",
-    "SessionTreeNode",
     "User",
     "UserRefreshToken",
     "UserRole",
     "UserStatus",
     "Workflow",
-    "WorkflowTreeNode",
 ]

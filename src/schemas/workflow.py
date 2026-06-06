@@ -6,11 +6,15 @@ from pydantic import BaseModel, ConfigDict
 
 class WorkflowCreate(BaseModel):
     name: str
+    description: str | None = None
+    url: str | None = None
     meta: dict | None = None
 
 
 class WorkflowUpdate(BaseModel):
     name: str | None = None
+    description: str | None = None
+    url: str | None = None
     meta: dict | None = None
 
 
@@ -20,7 +24,8 @@ class WorkflowResponse(BaseModel):
     id: uuid.UUID
     organization_id: uuid.UUID
     name: str
-    hex_root: str
+    description: str | None = None
+    url: str | None = None
     created_at: datetime
     meta: dict | None = None
 

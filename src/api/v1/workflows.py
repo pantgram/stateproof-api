@@ -1,28 +1,27 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_db
 from src.middleware.auth import Principal, get_api_key_principal, get_current_principal
+from src.models.base import Event, SessionStatus
 from src.schemas.session import (
+    EventAddRequest,
+    EventAddResponse,
+    SessionCloseRequest,
+    SessionCloseResponse,
     SessionCreate,
     SessionListResponse,
     SessionResponse,
+    SessionStart,
     SessionSubmitResponse,
 )
-from src.schemas.tree_node import (
-    SessionTreeNodeListResponse,
-    WorkflowTreeNodeListResponse,
-)
-from src.schemas.verify import (
-    EventProofResponse,
-    SessionProofResponse,
-    VerifyWorkflowRequest,
-    VerifyWorkflowResponse,
-)
+from src.schemas.verify import EventProofRequest, EventProofResponse
 from src.schemas.workflow import WorkflowCreate, WorkflowListResponse, WorkflowResponse, WorkflowUpdate
 from src.services import session_service, workflow_service
+from src.services.merkle import build_tree
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -91,7 +90,7 @@ async def create_session(
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     try:
-        sess, hex_root = await session_service.create_session(db, workflow_id, data)
+        sess = await session_service.create_session(db, workflow_id, data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -101,8 +100,7 @@ async def create_session(
     return {
         "id": sess.id,
         "workflow_id": sess.workflow_id,
-        "session_hash": sess.session_hash,
-        "hex_root": hex_root,
+        "session_root": sess.session_root,
         "status": sess.status.value,
     }
 
@@ -138,87 +136,108 @@ async def get_session(
     return sess
 
 
-@router.get("/{workflow_id}/sessions/{session_id}/proof", response_model=SessionProofResponse)
-async def get_session_proof(
-    workflow_id: uuid.UUID,
-    session_id: uuid.UUID,
-    principal: Principal = Depends(get_current_principal),
-    db: AsyncSession = Depends(get_db),
-):
-    result = await session_service.get_session_proof(db, workflow_id, session_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return result
-
-
-@router.get(
-    "/{workflow_id}/sessions/{session_id}/events/{sequence_no}/proof",
+@router.post(
+    "/{workflow_id}/sessions/{session_id}/events/proof",
     response_model=EventProofResponse,
 )
 async def get_event_proof(
     workflow_id: uuid.UUID,
     session_id: uuid.UUID,
-    sequence_no: int,
+    data: EventProofRequest,
     principal: Principal = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await session_service.get_event_proof(db, workflow_id, session_id, sequence_no)
+    result = await session_service.get_event_proof(
+        db, workflow_id, session_id, data.sequence_no, data.payload
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="Event not found")
     return result
 
 
-@router.post("/{workflow_id}/verify", response_model=VerifyWorkflowResponse)
-async def verify_workflow(
+@router.post("/{workflow_id}/sessions/start", response_model=SessionSubmitResponse, status_code=201)
+async def start_session(
     workflow_id: uuid.UUID,
-    data: VerifyWorkflowRequest,
-    principal: Principal = Depends(get_current_principal),
+    data: SessionStart,
+    principal: Principal = Depends(get_api_key_principal),
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        result = await session_service.verify_workflow_sessions(
-            db, workflow_id, [s.model_dump() for s in data.sessions]
-        )
+        sess = await session_service.start_session(db, workflow_id, data)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    return result
+        raise HTTPException(status_code=400, detail=str(e))
+
+    await db.commit()
+    await db.refresh(sess)
+
+    return {
+        "id": sess.id,
+        "workflow_id": sess.workflow_id,
+        "session_root": sess.session_root,
+        "status": sess.status.value,
+    }
 
 
-@router.get("/{workflow_id}/tree-nodes", response_model=WorkflowTreeNodeListResponse)
-async def list_workflow_tree_nodes(
-    workflow_id: uuid.UUID,
-    offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
-    principal: Principal = Depends(get_current_principal),
-    db: AsyncSession = Depends(get_db),
-):
-    wf = await workflow_service.get_workflow(db, principal.organization_id, workflow_id)
-    if wf is None:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-
-    result = await session_service.list_workflow_tree_nodes(db, workflow_id, offset, limit)
-    return {"workflow_tree_nodes": result[0], "total": result[1]}
-
-
-@router.get(
-    "/{workflow_id}/sessions/{session_id}/tree-nodes",
-    response_model=SessionTreeNodeListResponse,
+@router.post(
+    "/{workflow_id}/sessions/{session_id}/events",
+    response_model=EventAddResponse,
 )
-async def list_session_tree_nodes(
+async def add_events(
     workflow_id: uuid.UUID,
     session_id: uuid.UUID,
-    offset: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
-    principal: Principal = Depends(get_current_principal),
+    data: EventAddRequest,
+    principal: Principal = Depends(get_api_key_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    wf = await workflow_service.get_workflow(db, principal.organization_id, workflow_id)
-    if wf is None:
-        raise HTTPException(status_code=404, detail="Workflow not found")
+    try:
+        new_events = await session_service.add_events(db, workflow_id, session_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-    result = await session_service.list_session_tree_nodes(
-        db, workflow_id, session_id, offset, limit
+    await db.commit()
+    return {
+        "events": [
+            {"sequence_no": e.sequence_no, "event_hash": e.event_hash}
+            for e in new_events
+        ]
+    }
+
+
+@router.post(
+    "/{workflow_id}/sessions/{session_id}/close",
+    response_model=SessionCloseResponse,
+)
+async def close_session(
+    workflow_id: uuid.UUID,
+    session_id: uuid.UUID,
+    data: SessionCloseRequest,
+    principal: Principal = Depends(get_api_key_principal),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        sess = await session_service.close_session(
+            db, workflow_id, session_id,
+            SessionStatus(data.status), data.ended_at
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    all_events_result = await db.execute(
+        select(Event)
+        .where(Event.session_id == session_id)
+        .order_by(Event.sequence_no.asc())
     )
-    if result is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return {"session_tree_nodes": result[0], "total": result[1]}
+    all_events = list(all_events_result.scalars().all())
+
+    tree = build_tree([e.event_hash for e in all_events])
+    proofs = session_service.build_all_proofs(session_id, all_events, tree)
+
+    await db.commit()
+
+    return {
+        "id": sess.id,
+        "workflow_id": sess.workflow_id,
+        "session_root": sess.session_root,
+        "status": sess.status.value,
+        "event_proofs": proofs,
+    }
