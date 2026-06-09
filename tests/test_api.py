@@ -89,15 +89,56 @@ async def test_full_workflow(client: AsyncClient):
     assert event_proof_resp.status_code == 200
     event_proof = event_proof_resp.json()
     assert event_proof["sequence_no"] == 0
-    assert len(event_proof["data_hash"]) == 64
     assert len(event_proof["event_hash"]) == 64
     assert event_proof["session_root"] == s1["session_root"]
     assert len(event_proof["proof_path"]) > 0
 
-    client_computed_hash = _compute_event_hash(s1["id"], 0, make_payload(0))
-    assert verify_proof(
-        client_computed_hash, event_proof["proof_path"], event_proof["session_root"]
+    verify_resp = await client.post(
+        "/api/v1/verify",
+        json={
+            "session_id": s1["id"],
+            "sequence_no": 0,
+            "payload": make_payload(0),
+            "proof_path": event_proof["proof_path"],
+            "hex_root": event_proof["session_root"],
+        },
     )
+    assert verify_resp.status_code == 200
+    assert verify_resp.json()["valid"] is True
+
+
+@pytest.mark.asyncio
+async def test_stateless_verify_rejects_wrong_payload(client: AsyncClient):
+    wf_resp = await client.post(
+        "/api/v1/workflows",
+        json={"name": "Verify Wrong Payload WF"},
+    )
+    wf_id = wf_resp.json()["id"]
+
+    sess_resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/sessions",
+        json={"events": make_events(3), "started_at": "2026-01-01T00:00:00Z"},
+    )
+    sess = sess_resp.json()
+
+    event_proof_resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/sessions/{sess['id']}/events/proof",
+        json={"sequence_no": 0, "payload": make_payload(0)},
+    )
+    event_proof = event_proof_resp.json()
+
+    verify_resp = await client.post(
+        "/api/v1/verify",
+        json={
+            "session_id": sess["id"],
+            "sequence_no": 0,
+            "payload": {"wrong": "data"},
+            "proof_path": event_proof["proof_path"],
+            "hex_root": event_proof["session_root"],
+        },
+    )
+    assert verify_resp.status_code == 200
+    assert verify_resp.json()["valid"] is False
 
 
 @pytest.mark.asyncio
@@ -289,7 +330,6 @@ async def test_incremental_session_full_flow(client: AsyncClient):
 
     for i, ep in enumerate(closed["event_proofs"]):
         assert ep["sequence_no"] == i
-        assert len(ep["data_hash"]) == 64
         assert len(ep["event_hash"]) == 64
         assert len(ep["proof_path"]) > 0
         client_hash = _compute_event_hash(sess_id, i, make_payload(i))

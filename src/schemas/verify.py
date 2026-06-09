@@ -12,7 +12,6 @@ class ProofStep(BaseModel):
 class EventProofResponse(BaseModel):
     session_id: uuid.UUID
     sequence_no: int
-    data_hash: str
     event_hash: str
     proof_path: list[ProofStep]
     session_root: str
@@ -24,7 +23,9 @@ class EventProofRequest(BaseModel):
 
 
 class StatelessVerifyRequest(BaseModel):
-    leaf_hash: str
+    session_id: uuid.UUID
+    sequence_no: int
+    payload: dict
     proof_path: list[ProofStep]
     hex_root: str
 

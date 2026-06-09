@@ -10,6 +10,7 @@ from src.models.base import Event, SessionStatus
 from src.schemas.session import (
     EventAddRequest,
     EventAddResponse,
+    SessionBatchResponse,
     SessionCloseRequest,
     SessionCloseResponse,
     SessionCreate,
@@ -84,7 +85,7 @@ async def update_workflow(
 
 
 @router.post(
-    "/{workflow_id}/sessions", response_model=SessionSubmitResponse, status_code=201
+    "/{workflow_id}/sessions", response_model=SessionBatchResponse, status_code=201
 )
 async def create_session(
     workflow_id: uuid.UUID,
@@ -97,9 +98,18 @@ async def create_session(
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     try:
-        sess = await session_service.create_session(db, workflow_id, data)
+        sess, event_hashes, tree = await session_service.create_session(db, workflow_id, data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    proofs = [
+        {
+            "sequence_no": seq,
+            "event_hash": eh,
+            "proof_path": tree.get_proof(i),
+        }
+        for i, (seq, _, eh) in enumerate(event_hashes)
+    ]
 
     await db.commit()
     await db.refresh(sess)
@@ -109,6 +119,7 @@ async def create_session(
         "workflow_id": sess.workflow_id,
         "session_root": sess.session_root,
         "status": sess.status.value,
+        "event_proofs": proofs,
     }
 
 
@@ -210,7 +221,6 @@ async def add_events(
         "events": [
             {
                 "sequence_no": e.sequence_no,
-                "data_hash": e.data_hash,
                 "event_hash": e.event_hash,
             }
             for e in new_events

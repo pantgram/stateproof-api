@@ -43,6 +43,14 @@ class SessionSubmitResponse(BaseModel):
     status: str
 
 
+class SessionBatchResponse(BaseModel):
+    id: uuid.UUID
+    workflow_id: uuid.UUID
+    session_root: str | None
+    status: str
+    event_proofs: list[EventProofOut]
+
+
 class SessionStart(BaseModel):
     started_at: datetime | None = None
     meta: dict | None = None
@@ -54,7 +62,6 @@ class EventAddRequest(BaseModel):
 
 class EventAddItem(BaseModel):
     sequence_no: int
-    data_hash: str
     event_hash: str
 
 
@@ -69,7 +76,6 @@ class SessionCloseRequest(BaseModel):
 
 class EventProofOut(BaseModel):
     sequence_no: int
-    data_hash: str
     event_hash: str
     proof_path: list[ProofStep]
 

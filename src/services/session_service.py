@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.base import Event, Session, SessionStatus
 from src.schemas.session import EventAddRequest, SessionCreate, SessionStart
 from src.services.merkle import (
+    MerkleTree,
     build_tree,
     compute_raw_event_hash,
 )
@@ -17,7 +18,7 @@ from src.services.workflow_service import get_workflow_by_id_for_update
 
 async def create_session(
     db: AsyncSession, workflow_id: uuid.UUID, data: SessionCreate
-) -> Session:
+) -> tuple[Session, list[tuple[int, str, str]], MerkleTree]:
     wf = await get_workflow_by_id_for_update(db, workflow_id)
     if wf is None:
         raise ValueError("Workflow not found")
@@ -61,7 +62,12 @@ async def create_session(
     )
 
     await db.flush()
-    return sess
+
+    event_hashes = [
+        (i, event_data[i][0], event_data[i][1]) for i in range(len(data.events))
+    ]
+
+    return sess, event_hashes, session_tree
 
 
 async def start_session(
@@ -159,7 +165,6 @@ def build_all_proofs(
         proofs.append(
             {
                 "sequence_no": ev.sequence_no,
-                "data_hash": ev.data_hash,
                 "event_hash": ev.event_hash,
                 "proof_path": proof_path,
             }
@@ -241,7 +246,6 @@ async def get_event_proof(
     return {
         "session_id": session_id,
         "sequence_no": sequence_no,
-        "data_hash": event.data_hash,
         "event_hash": event.event_hash,
         "proof_path": proof_path,
         "session_root": sess.session_root,

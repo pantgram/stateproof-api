@@ -16,8 +16,11 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 
 COPY src/ src/
+COPY alembic/ alembic/
+COPY alembic.ini ./
 
 ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
